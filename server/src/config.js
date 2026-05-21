@@ -1,6 +1,10 @@
+// 文件职责：
+// 读取 .env 和环境变量，集中管理端口、数据集路径、Doubao/Ark 配置。
+
 import fs from "node:fs";
 import path from "node:path";
 
+// 轻量读取 .env，避免为了早期 MVP 引入 dotenv 依赖。
 function loadDotEnv() {
   const envPath = path.resolve(process.cwd(), ".env");
   if (!fs.existsSync(envPath)) return;
@@ -19,6 +23,7 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+// 全局配置集中放在这里，其他模块只读取 config，不直接散落读取环境变量。
 export const config = {
   port: Number(process.env.PORT || 3001),
   datasetDir: path.resolve(process.cwd(), process.env.DATASET_DIR || "../ecommerce_agent_dataset"),

@@ -1,3 +1,6 @@
+// 文件职责：
+// 基础检索逻辑，包括类目识别、商品类型识别、预算过滤、否定词过滤和简单打分。
+
 const CATEGORY_HINTS = [
   { category: "美妆护肤", words: ["护肤", "洗面奶", "面霜", "精华", "防晒", "油皮", "敏感肌", "保湿", "淡纹", "控油"] },
   { category: "数码电子", words: ["手机", "耳机", "蓝牙", "电脑", "平板", "拍照", "续航", "充电", "数码"] },
@@ -5,6 +8,7 @@ const CATEGORY_HINTS = [
   { category: "食品生活", words: ["食品", "零食", "饮料", "生活", "家用", "厨房", "清洁"] }
 ];
 
+// 去掉对检索帮助不大的泛化词，减少“推荐、适合”这类词干扰排序。
 const STOP_WORDS = new Set([
   "推荐",
   "一款",
@@ -21,6 +25,7 @@ const STOP_WORDS = new Set([
   "以上"
 ]);
 
+// 小型同义词表用于补足关键词检索能力，比如“洗面奶”和“洁面乳”本质接近。
 const SYNONYMS = {
   洗面奶: ["洁面", "洁面乳", "清洁"],
   蓝牙耳机: ["耳机", "真无线耳机", "降噪"],
@@ -29,6 +34,7 @@ const SYNONYMS = {
   轻量: ["轻薄", "轻盈", "轻"]
 };
 
+// 明确商品类型时先收紧候选范围，避免“蓝牙耳机”误召回食品、服装等商品。
 const ITEM_INTENTS = [
   { trigger: ["洗面奶", "洁面"], terms: ["洗面奶", "洁面", "洁面乳"] },
   { trigger: ["蓝牙耳机", "耳机"], terms: ["蓝牙耳机", "真无线耳机", "耳机"] },
@@ -42,6 +48,7 @@ function tokenize(text) {
   const chinese = normalized.match(/[\u4e00-\u9fa5]{2,}/g) || [];
   const phraseTokens = [];
 
+  // 中文没有空格分词，这里用 2-4 字滑窗做一个轻量分词方案。
   for (const phrase of chinese) {
     if (!STOP_WORDS.has(phrase)) phraseTokens.push(phrase);
     for (let size = 2; size <= 4; size += 1) {
@@ -60,6 +67,7 @@ function tokenize(text) {
   return expanded;
 }
 
+// 提取预算条件，例如“200 元以下”“不超过 500 元”。
 function extractPriceConstraint(message) {
   const under = message.match(/(\d+(?:\.\d+)?)\s*元?\s*(以内|以下|内|之内|以下的|以内的)/);
   if (under) return { max: Number(under[1]) };
@@ -73,6 +81,7 @@ function extractPriceConstraint(message) {
   return {};
 }
 
+// 提取否定约束，例如“不要含酒精”“除了耐克”。
 function extractNegativeTerms(message) {
   const terms = [];
   const patterns = [/不要([^，。,.；;]+)/g, /不含([^，。,.；;]+)/g, /除了([^，。,.；;]+)/g, /排除([^，。,.；;]+)/g];
@@ -87,6 +96,7 @@ function extractNegativeTerms(message) {
   return terms;
 }
 
+// 根据用户输入中的提示词粗略判断商品大类。
 function inferCategory(message) {
   for (const item of CATEGORY_HINTS) {
     if (item.words.some((word) => message.includes(word))) return item.category;
@@ -108,6 +118,7 @@ function scoreProduct(product, tokens, inferredCategory) {
   const haystack = `${product.searchableText} ${product.title} ${product.brand}`.toLowerCase();
   let score = 0;
 
+  // 类目匹配给较高权重，标题命中再额外加分。
   if (inferredCategory && product.category === inferredCategory) score += 8;
   for (const token of tokens) {
     if (token.length < 2) continue;
@@ -126,6 +137,7 @@ export function retrieveProducts(products, message, limit = 4) {
   const inferredCategory = inferCategory(message);
   const itemIntent = inferItemIntent(message);
 
+  // 先按类目缩小范围，再做商品类型、预算、否定词过滤。
   const categoryProducts = inferredCategory ? products.filter((product) => product.category === inferredCategory) : products;
   const scopedProducts = categoryProducts.length > 0 ? categoryProducts : products;
 
@@ -142,6 +154,7 @@ export function retrieveProducts(products, message, limit = 4) {
     }))
     .sort((a, b) => b.score - a.score || a.product.basePrice - b.product.basePrice);
 
+  // 有明显关键词命中的优先返回；否则返回过滤后的候选，便于模糊需求也有结果。
   const positive = candidates.filter((item) => item.score > 0).slice(0, limit);
   const fallback = inferredCategory ? candidates.slice(0, limit) : candidates.slice(0, limit);
   const selected = positive.length > 0 ? positive : fallback;

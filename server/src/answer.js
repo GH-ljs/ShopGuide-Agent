@@ -1,8 +1,12 @@
+// 文件职责：
+// 生成商品卡片、本地兜底回答，以及构造发给大模型的 Prompt。
+
 function shortDescription(product) {
   const text = product.marketingDescription || product.title;
   return text.length > 90 ? `${text.slice(0, 90)}...` : text;
 }
 
+// 商品卡片返回结构化数据，客户端不要从模型自然语言里再解析商品。
 export function buildProductCards(products) {
   return products.map((product) => ({
     productId: product.productId,
@@ -16,6 +20,7 @@ export function buildProductCards(products) {
   }));
 }
 
+// 没有配置模型 Key 时使用本地兜底回答，保证项目早期也能演示完整链路。
 export function buildLocalAnswer(message, products) {
   if (products.length === 0) {
     return "我在当前商品库里没有找到足够匹配的商品。你可以换一个预算、类目或使用场景再问我。";
@@ -31,6 +36,7 @@ export function buildLocalAnswer(message, products) {
   return [intro, ...lines, guardrail].join("\n");
 }
 
+// 构造发给大模型的 Prompt。关键约束是只能基于检索到的商品上下文回答。
 export function buildModelMessages(message, products) {
   const productContext = products.map((product, index) => ({
     index: index + 1,

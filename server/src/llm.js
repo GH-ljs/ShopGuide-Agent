@@ -1,5 +1,9 @@
+// 文件职责：
+// 调用 Doubao/Ark 的 OpenAI-compatible 流式接口，解析模型返回的 token。
+
 import { buildModelMessages } from "./answer.js";
 
+// 调用 Doubao/Ark 的 OpenAI-compatible chat completions，并把流式 token 逐个 yield 出去。
 export async function* streamModelAnswer(config, message, products) {
   const response = await fetch(`${config.arkBaseUrl}/chat/completions`, {
     method: "POST",
@@ -23,6 +27,7 @@ export async function* streamModelAnswer(config, message, products) {
   const decoder = new TextDecoder();
   let buffer = "";
 
+  // SSE 数据可能被网络切成半行，所以用 buffer 累积，按行解析 data: payload。
   for await (const chunk of response.body) {
     buffer += decoder.decode(chunk, { stream: true });
     const lines = buffer.split("\n");
@@ -34,6 +39,7 @@ export async function* streamModelAnswer(config, message, products) {
       const payload = trimmed.slice(5).trim();
       if (payload === "[DONE]") return;
       const json = JSON.parse(payload);
+      // OpenAI-compatible 流式响应的正文增量通常放在 choices[0].delta.content。
       const delta = json.choices?.[0]?.delta?.content;
       if (delta) yield delta;
     }
