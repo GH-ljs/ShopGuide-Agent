@@ -5,9 +5,10 @@
 ## 当前能力
 
 - 加载 `../ecommerce_agent_dataset` 下的商品 JSON。
-- 使用轻量本地检索器搜索商品。
+- 使用本地文本向量检索器搜索商品。
 - 通过 SSE 流式返回导购回复。
 - 返回结构化商品卡片。
+- 支持基于 `conversationId` 的内存多轮会话。
 - 没有模型 Key 时也可以离线运行。
 - 配置 `ARK_API_KEY` 后，可以调用 Doubao/OpenAI-compatible 接口。
 
@@ -47,6 +48,8 @@ curl -N -X POST http://localhost:3001/api/chat ^
 }
 ```
 
+同一个 `conversationId` 的最近对话会参与下一轮检索和模型 Prompt。当前会话记忆存放在进程内存里，服务重启后会清空。
+
 响应类型为 `text/event-stream`：
 
 - `event: token`: 流式文本片段
@@ -55,7 +58,7 @@ curl -N -X POST http://localhost:3001/api/chat ^
 
 ## 下一步
 
-1. 将本地关键词检索替换为向量检索。
-2. 增加多轮对话记忆。
+1. 将本地文本向量检索升级为 embedding + Qdrant/Chroma。
+2. 增强反选条件和多商品对比。
 3. 增加购物车相关 API。
 4. 连接 Android 客户端，通过 SSE 展示流式回复。

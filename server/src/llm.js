@@ -4,7 +4,7 @@
 import { buildModelMessages } from "./answer.js";
 
 // 调用 Doubao/Ark 的 OpenAI-compatible chat completions，并把流式 token 逐个 yield 出去。
-export async function* streamModelAnswer(config, message, products) {
+export async function* streamModelAnswer(config, message, products, history = []) {
   const response = await fetch(`${config.arkBaseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -13,7 +13,7 @@ export async function* streamModelAnswer(config, message, products) {
     },
     body: JSON.stringify({
       model: config.arkModel,
-      messages: buildModelMessages(message, products),
+      messages: buildModelMessages(message, products, history),
       stream: true,
       temperature: 0.3
     })

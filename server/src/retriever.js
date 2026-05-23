@@ -1,5 +1,7 @@
 // 文件职责：
-// 基础检索逻辑，包括类目识别、商品类型识别、预算过滤、否定词过滤和简单打分。
+// 基础检索逻辑，包括类目识别、商品类型识别、预算过滤、否定词过滤和本地向量相似度排序。
+
+import { createVectorIndex } from "./vectorStore.js";
 
 const CATEGORY_HINTS = [
   { category: "美妆护肤", words: ["护肤", "洗面奶", "面霜", "精华", "防晒", "油皮", "敏感肌", "保湿", "淡纹", "控油"] },
@@ -8,32 +10,6 @@ const CATEGORY_HINTS = [
   { category: "食品生活", words: ["食品", "零食", "饮料", "生活", "家用", "厨房", "清洁"] }
 ];
 
-// 去掉对检索帮助不大的泛化词，减少“推荐、适合”这类词干扰排序。
-const STOP_WORDS = new Set([
-  "推荐",
-  "一款",
-  "有没有",
-  "哪些",
-  "适合",
-  "帮我",
-  "一下",
-  "这个",
-  "那个",
-  "比较",
-  "以内",
-  "以下",
-  "以上"
-]);
-
-// 小型同义词表用于补足关键词检索能力，比如“洗面奶”和“洁面乳”本质接近。
-const SYNONYMS = {
-  洗面奶: ["洁面", "洁面乳", "清洁"],
-  蓝牙耳机: ["耳机", "真无线耳机", "降噪"],
-  跑鞋: ["跑步鞋", "训练鞋", "公路跑鞋"],
-  油皮: ["控油", "混合性皮肤", "油性"],
-  轻量: ["轻薄", "轻盈", "轻"]
-};
-
 // 明确商品类型时先收紧候选范围，避免“蓝牙耳机”误召回食品、服装等商品。
 const ITEM_INTENTS = [
   { trigger: ["洗面奶", "洁面"], terms: ["洗面奶", "洁面", "洁面乳"] },
@@ -41,31 +17,6 @@ const ITEM_INTENTS = [
   { trigger: ["跑鞋", "跑步鞋"], terms: ["跑鞋", "跑步鞋", "训练鞋"] },
   { trigger: ["防晒霜", "防晒"], terms: ["防晒霜", "防晒乳", "防晒"] }
 ];
-
-function tokenize(text) {
-  const normalized = text.toLowerCase();
-  const latin = normalized.match(/[a-z0-9]+/g) || [];
-  const chinese = normalized.match(/[\u4e00-\u9fa5]{2,}/g) || [];
-  const phraseTokens = [];
-
-  // 中文没有空格分词，这里用 2-4 字滑窗做一个轻量分词方案。
-  for (const phrase of chinese) {
-    if (!STOP_WORDS.has(phrase)) phraseTokens.push(phrase);
-    for (let size = 2; size <= 4; size += 1) {
-      for (let i = 0; i <= phrase.length - size; i += 1) {
-        const token = phrase.slice(i, i + size);
-        if (!STOP_WORDS.has(token)) phraseTokens.push(token);
-      }
-    }
-  }
-
-  const expanded = [...latin, ...phraseTokens];
-  for (const [word, synonyms] of Object.entries(SYNONYMS)) {
-    if (text.includes(word)) expanded.push(...synonyms);
-  }
-
-  return expanded;
-}
 
 // 提取预算条件，例如“200 元以下”“不超过 500 元”。
 function extractPriceConstraint(message) {
@@ -114,24 +65,7 @@ function matchesItemIntent(product, itemIntent) {
   return itemIntent.terms.some((term) => itemText.includes(term.toLowerCase()));
 }
 
-function scoreProduct(product, tokens, inferredCategory) {
-  const haystack = `${product.searchableText} ${product.title} ${product.brand}`.toLowerCase();
-  let score = 0;
-
-  // 类目匹配给较高权重，标题命中再额外加分。
-  if (inferredCategory && product.category === inferredCategory) score += 8;
-  for (const token of tokens) {
-    if (token.length < 2) continue;
-    if (product.title.toLowerCase().includes(token)) score += 5;
-    if (product.brand.toLowerCase().includes(token)) score += 3;
-    if (haystack.includes(token)) score += 1;
-  }
-
-  return score;
-}
-
-export function retrieveProducts(products, message, limit = 4) {
-  const tokens = tokenize(message);
+export function retrieveProducts(products, message, limit = 4, vectorIndex = createVectorIndex(products)) {
   const price = extractPriceConstraint(message);
   const negativeTerms = extractNegativeTerms(message);
   const inferredCategory = inferCategory(message);
@@ -148,16 +82,14 @@ export function retrieveProducts(products, message, limit = 4) {
       if (price.min && product.basePrice < price.min) return false;
       return !negativeTerms.some((term) => product.searchableText.includes(term));
     })
-    .map((product) => ({
-      product,
-      score: scoreProduct(product, tokens, inferredCategory)
-    }))
-    .sort((a, b) => b.score - a.score || a.product.basePrice - b.product.basePrice);
+    .sort((a, b) => a.basePrice - b.basePrice);
 
-  // 有明显关键词命中的优先返回；否则返回过滤后的候选，便于模糊需求也有结果。
-  const positive = candidates.filter((item) => item.score > 0).slice(0, limit);
-  const fallback = inferredCategory ? candidates.slice(0, limit) : candidates.slice(0, limit);
-  const selected = positive.length > 0 ? positive : fallback;
+  if (candidates.length === 0) return [];
+
+  // 当前 MVP 使用本地词频向量 + 余弦相似度；后续可替换成真实 embedding + 向量数据库。
+  const ranked = vectorIndex.search(message, candidates, limit);
+  const positive = ranked.filter((item) => item.score > 0);
+  const selected = positive.length > 0 ? positive : candidates.slice(0, limit).map((product) => ({ product, score: 0 }));
 
   return selected.map((item) => item.product);
 }

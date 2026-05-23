@@ -1,9 +1,9 @@
-// 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
 // 文件职责：
 // 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
 
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
 import { streamModelAnswer } from "./llm.js";
+import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts } from "./memory.js";
 import { retrieveProducts } from "./retriever.js";
 
 // 普通 JSON 响应工具，主要给 health/products/错误返回使用。
@@ -39,7 +39,8 @@ async function streamText(res, text) {
   }
 }
 
-export function createHandler({ config, products }) {
+// 请求进来-->判断路径
+export function createHandler({ config, products, vectorIndex }) {
   return async function handler(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -79,8 +80,13 @@ export function createHandler({ config, products }) {
       const message = String(body.message || "").trim();
       if (!message) return sendJson(res, 400, { error: "message is required" });
 
+      const conversationId = String(body.conversationId || "default").trim() || "default";
+      const session = getSession(conversationId);
+      const history = getRecentTurns(session);
+      const retrievalQuery = buildRetrievalQuery(session, message);
+
       // 先检索商品，再把候选商品交给本地回答或大模型生成。
-      const matchedProducts = retrieveProducts(products, message, 4);
+      const matchedProducts = retrieveProducts(products, retrievalQuery, 4, vectorIndex);
       const cards = buildProductCards(matchedProducts);
 
       res.writeHead(200, {
@@ -91,19 +97,26 @@ export function createHandler({ config, products }) {
       });
 
       try {
+        let answerText = "";
         if (config.arkApiKey) {
           // 配置 Key 后走真实模型流式输出。
-          for await (const token of streamModelAnswer(config, message, matchedProducts)) {
+          for await (const token of streamModelAnswer(config, message, matchedProducts, history)) {
+            answerText += token;
             writeSse(res, "token", { content: token });
           }
         } else {
           // 未配置 Key 时走本地兜底，保证后端和客户端联调不被模型依赖阻塞。
-          await streamText(res, buildLocalAnswer(message, matchedProducts));
+          answerText = buildLocalAnswer(message, matchedProducts, history);
+          await streamText(res, answerText);
         }
+
+        appendTurn(session, "user", message);
+        appendTurn(session, "assistant", answerText);
+        rememberProducts(session, matchedProducts);
 
         // 文本流结束后，再单独发送商品卡片，客户端可据此渲染可点击卡片。
         writeSse(res, "products", { products: cards });
-        writeSse(res, "done", { ok: true });
+        writeSse(res, "done", { ok: true, conversationId });
       } catch (error) {
         writeSse(res, "error", { message: error.message });
       } finally {
