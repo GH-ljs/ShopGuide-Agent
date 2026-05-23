@@ -9,6 +9,7 @@
 - 通过 SSE 流式返回导购回复。
 - 返回结构化商品卡片。
 - 支持基于 `conversationId` 的内存多轮会话。
+- 支持结构化导购状态，用于处理“再便宜点”“不要含酒精”等追问。
 - 没有模型 Key 时也可以离线运行。
 - 配置 `ARK_API_KEY` 后，可以调用 Doubao/OpenAI-compatible 接口。
 

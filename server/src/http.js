@@ -3,8 +3,8 @@
 
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
 import { streamModelAnswer } from "./llm.js";
-import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts } from "./memory.js";
-import { retrieveProducts } from "./retriever.js";
+import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, updateSessionState } from "./memory.js";
+import { retrieveProductsWithState } from "./retriever.js";
 
 // 普通 JSON 响应工具，主要给 health/products/错误返回使用。
 function sendJson(res, status, payload) {
@@ -82,11 +82,12 @@ export function createHandler({ config, products, vectorIndex }) {
 
       const conversationId = String(body.conversationId || "default").trim() || "default";
       const session = getSession(conversationId);
+      const state = updateSessionState(session, message);
       const history = getRecentTurns(session);
       const retrievalQuery = buildRetrievalQuery(session, message);
 
       // 先检索商品，再把候选商品交给本地回答或大模型生成。
-      const matchedProducts = retrieveProducts(products, retrievalQuery, 4, vectorIndex);
+      const matchedProducts = retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
       const cards = buildProductCards(matchedProducts);
 
       res.writeHead(200, {
@@ -100,13 +101,13 @@ export function createHandler({ config, products, vectorIndex }) {
         let answerText = "";
         if (config.arkApiKey) {
           // 配置 Key 后走真实模型流式输出。
-          for await (const token of streamModelAnswer(config, message, matchedProducts, history)) {
+          for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
             answerText += token;
             writeSse(res, "token", { content: token });
           }
         } else {
           // 未配置 Key 时走本地兜底，保证后端和客户端联调不被模型依赖阻塞。
-          answerText = buildLocalAnswer(message, matchedProducts, history);
+          answerText = buildLocalAnswer(message, matchedProducts, history, state);
           await streamText(res, answerText);
         }
 
