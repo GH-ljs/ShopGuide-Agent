@@ -116,7 +116,39 @@ curl -N -X POST http://localhost:3001/api/chat ^
 - `event: products`: 商品卡片列表
 - `event: done`: 完成标记
 
+### `POST /api/conversations/reset`
+
+清空指定 `conversationId` 的内存会话状态。客户端新建对话时可以调用。
+
+```json
+{
+  "conversationId": "demo"
+}
+```
+
+### `POST /api/debug/retrieve`
+
+返回检索调试信息，包括解析出的类目、商品类型、过滤候选数量、向量匹配和最终商品卡片。这个接口用于开发调试，不建议直接面向最终用户。
+
+```json
+{
+  "message": "推荐一款适合油皮的防晒霜",
+  "conversationId": "debug-demo",
+  "includeMemory": false
+}
+```
+
 完整接口文档见 `../docs/api.md`。
+
+## 客户端对接重点
+
+第一阶段客户端优先实现：
+
+1. `POST /api/chat`: 接收 SSE，渲染 `token` 文本流和 `products` 商品卡片。
+2. `POST /api/conversations/reset`: 新建对话或清空上下文。
+3. `GET /api/health`: 启动页或调试页检查后端是否可用。
+
+`products` 事件是商品卡片的唯一可靠来源，客户端不要从模型文本里反向解析商品价格、图片路径或商品 ID。
 
 ## 测试
 

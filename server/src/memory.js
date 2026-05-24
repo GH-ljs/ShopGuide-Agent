@@ -43,6 +43,21 @@ export function getSession(conversationId) {
   return sessions.get(id);
 }
 
+export function resetSession(conversationId) {
+  const id = conversationId || "default";
+  sessions.set(id, createEmptySession(id));
+  return sessions.get(id);
+}
+
+export function snapshotSession(session) {
+  return {
+    conversationId: session.conversationId,
+    state: session.state,
+    turnCount: session.turns.length,
+    lastProductIds: session.lastProducts.map((product) => product.productId)
+  };
+}
+
 function extractPriceConstraint(message) {
   const under = message.match(/(\d+(?:\.\d+)?)\s*元?\s*(以内|以下|内|之内|以下的|以内的)/);
   if (under) return { maxPrice: Number(under[1]) };

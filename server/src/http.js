@@ -4,8 +4,8 @@
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
 import { buildError, ERROR_CODES } from "./errors.js";
 import { streamModelAnswer } from "./llm.js";
-import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, updateSessionState } from "./memory.js";
-import { retrieveProductsWithState } from "./retriever.js";
+import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, resetSession, snapshotSession, updateSessionState } from "./memory.js";
+import { retrieveProductsWithDebug, retrieveProductsWithState } from "./retriever.js";
 
 // 普通 JSON 响应工具，主要给 health/products/错误返回使用。
 function sendJson(res, status, payload) {
@@ -69,6 +69,56 @@ export function createHandler({ config, products, vectorIndex }) {
           imagePath: product.imagePath
         }))
       );
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/conversations/reset") {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
+      }
+
+      const conversationId = String(body.conversationId || "default").trim() || "default";
+      // 重置会话只清空内存状态，不影响商品索引和 Qdrant 数据。
+      const session = resetSession(conversationId);
+      return sendJson(res, 200, {
+        ok: true,
+        conversationId,
+        session: snapshotSession(session)
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/debug/retrieve") {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
+      }
+
+      const message = String(body.message || "").trim();
+      if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
+
+      const conversationId = String(body.conversationId || "debug").trim() || "debug";
+      const includeMemory = body.includeMemory !== false;
+      const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
+      const state = updateSessionState(session, message);
+      const retrievalQuery = buildRetrievalQuery(session, message);
+      const debug = await retrieveProductsWithDebug(products, retrievalQuery, state, Number(body.limit || 4), vectorIndex);
+
+      return sendJson(res, 200, {
+        ok: true,
+        conversationId,
+        includeMemory,
+        session: snapshotSession(session),
+        originalMessage: message,
+        retrievalQuery,
+        retrieval: {
+          ...debug,
+          products: buildProductCards(debug.products)
+        }
+      });
     }
 
     if (req.method === "POST" && url.pathname === "/api/chat") {

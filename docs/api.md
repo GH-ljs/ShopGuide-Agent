@@ -46,7 +46,8 @@ INTERNAL_ERROR
 {
   "ok": true,
   "productCount": 100,
-  "modelEnabled": false
+  "modelEnabled": false,
+  "llmProvider": "deepseek"
 }
 ```
 
@@ -130,6 +131,94 @@ data: {"ok":true,"conversationId":"demo-user-1"}
 ```text
 event: error
 data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","details":"..."}}
+```
+
+## POST /api/conversations/reset
+
+重置指定会话的内存状态。客户端新建对话、用户点击“重新开始”或调试时可以调用。
+
+请求示例：
+
+```json
+{
+  "conversationId": "demo-user-1"
+}
+```
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "conversationId": "demo-user-1",
+  "session": {
+    "conversationId": "demo-user-1",
+    "state": {
+      "category": "",
+      "itemIntent": null,
+      "maxPrice": null,
+      "minPrice": null,
+      "excludeTerms": [],
+      "preferences": [],
+      "lastProductIds": []
+    },
+    "turnCount": 0,
+    "lastProductIds": []
+  }
+}
+```
+
+## POST /api/debug/retrieve
+
+检索调试接口。用于查看 RAG 检索链路，不建议作为正式客户端用户功能展示。
+
+请求示例：
+
+```json
+{
+  "conversationId": "debug-1",
+  "message": "推荐一款适合油皮的防晒霜",
+  "limit": 4,
+  "includeMemory": false
+}
+```
+
+字段说明：
+
+- `conversationId`: 会话 ID。
+- `message`: 要调试的用户问题。
+- `limit`: 返回商品数量，默认 4。
+- `includeMemory`: 是否使用该会话已有记忆。调试单轮检索时建议传 `false`。
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "conversationId": "debug-1",
+  "includeMemory": false,
+  "originalMessage": "推荐一款适合油皮的防晒霜",
+  "retrievalQuery": "美妆护肤 防晒 油皮 推荐一款适合油皮的防晒霜",
+  "retrieval": {
+    "parsed": {
+      "category": "美妆护肤",
+      "itemIntent": "防晒",
+      "maxPrice": null,
+      "minPrice": null,
+      "negativeTerms": []
+    },
+    "counts": {
+      "totalProducts": 100,
+      "categoryCandidates": 25,
+      "filteredCandidates": 3,
+      "vectorMatches": 3,
+      "finalProducts": 3
+    },
+    "candidatePreview": [],
+    "vectorMatches": [],
+    "products": []
+  }
+}
 ```
 
 ## PowerShell 调试示例

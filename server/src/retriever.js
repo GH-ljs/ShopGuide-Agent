@@ -80,6 +80,11 @@ export async function retrieveProducts(products, message, limit = 4, vectorIndex
 }
 
 export async function retrieveProductsWithState(products, message, state = {}, limit = 4, vectorIndex = createVectorIndex(products), parsed = null) {
+  const debug = await retrieveProductsWithDebug(products, message, state, limit, vectorIndex, parsed);
+  return debug.products;
+}
+
+export async function retrieveProductsWithDebug(products, message, state = {}, limit = 4, vectorIndex = createVectorIndex(products), parsed = null) {
   const price = parsed?.price || extractPriceConstraint(message);
   const negativeTerms = [...(state.excludeTerms || []), ...(parsed?.negativeTerms || extractNegativeTerms(message))];
   const inferredCategory = state.category || parsed?.inferredCategory || inferCategory(message);
@@ -101,13 +106,50 @@ export async function retrieveProductsWithState(products, message, state = {}, l
     })
     .sort((a, b) => a.basePrice - b.basePrice);
 
-  if (candidates.length === 0) return [];
+  const debug = {
+    query: message,
+    parsed: {
+      category: inferredCategory,
+      itemIntent: itemIntent?.itemType || "",
+      maxPrice: maxPrice ?? null,
+      minPrice: minPrice ?? null,
+      negativeTerms
+    },
+    counts: {
+      totalProducts: products.length,
+      categoryCandidates: scopedProducts.length,
+      filteredCandidates: candidates.length,
+      vectorMatches: 0,
+      finalProducts: 0
+    },
+    candidatePreview: candidates.slice(0, 8).map((product) => ({
+      productId: product.productId,
+      title: product.title,
+      price: product.basePrice,
+      category: product.category,
+      subCategory: product.subCategory
+    })),
+    vectorMatches: [],
+    products: []
+  };
+
+  if (candidates.length === 0) return debug;
 
   // vectorIndex.search 在 local 模式是同步计算，在 Qdrant 模式是网络请求；await 可同时兼容两种实现。
   const ranked = await vectorIndex.search(message, candidates, limit);
   const positive = ranked.filter((item) => item.score > 0);
-  if (positive.length === 0 && !hasHardConstraint) return [];
+  debug.counts.vectorMatches = ranked.length;
+  debug.vectorMatches = ranked.map((item) => ({
+    productId: item.product.productId,
+    title: item.product.title,
+    price: item.product.basePrice,
+    score: Number(item.score.toFixed(6))
+  }));
+
+  if (positive.length === 0 && !hasHardConstraint) return debug;
   const selected = positive.length > 0 ? positive : candidates.slice(0, limit).map((product) => ({ product, score: 0 }));
 
-  return selected.map((item) => item.product);
+  debug.products = selected.map((item) => item.product);
+  debug.counts.finalProducts = debug.products.length;
+  return debug;
 }

@@ -141,6 +141,8 @@ http://localhost:3001/api/health
 - `GET /api/health`: 服务健康检查
 - `GET /api/products`: 商品列表
 - `POST /api/chat`: SSE 流式导购对话
+- `POST /api/conversations/reset`: 清空指定会话记忆
+- `POST /api/debug/retrieve`: 查看检索调试信息
 
 详细接口文档见 [docs/api.md](docs/api.md)。
 
@@ -155,10 +157,25 @@ http://localhost:3001/api/health
 
 同一个 `conversationId` 的最近对话会保存在内存中，服务重启后会清空。
 
+## 客户端开发准备
+
+客户端第一阶段只需要接入三个能力：
+
+1. 调用 `POST /api/chat`，按 SSE 事件渲染流式文字和商品卡片。
+2. 新建对话时生成新的 `conversationId`，或调用 `POST /api/conversations/reset` 清空旧会话。
+3. 调试推荐结果时调用 `POST /api/debug/retrieve`，查看候选数量、向量匹配分数和最终商品。
+
+SSE 事件顺序通常是：
+
+```text
+token... -> products -> done
+```
+
+商品展示以 `products` 事件里的结构化卡片为准，不要从模型自然语言里解析价格、图片或商品 ID。
+
 ## 后续里程碑
 
-1. 用 Doubao/Ark embedding 重新入库并验证真实语义检索效果。
-2. 强化反选约束、商品对比和购物车能力。
-3. 创建 Android Kotlin 客户端。
-4. 在客户端展示流式文字和商品卡片。
-5. 增加图片找货、语音输入等多模态加分项。
+1. 创建 Android Kotlin 客户端。
+2. 在客户端展示流式文字和商品卡片。
+3. 强化商品对比、收藏或购物车能力。
+4. 增加图片找货、语音输入等多模态加分项。

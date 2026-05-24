@@ -27,7 +27,7 @@ function parseSseEvents(text) {
 
 async function createTestServer() {
   const products = loadProducts(config.datasetDir);
-  const testConfig = { ...config, port: 0, arkApiKey: "", vectorStore: "local" };
+  const testConfig = { ...config, port: 0, arkApiKey: "", deepseekApiKey: "", llmApiKey: "", vectorStore: "local" };
   const vectorIndex = createSearchIndex(testConfig, products);
   const server = http.createServer(createHandler({ config: testConfig, products, vectorIndex }));
 
@@ -37,6 +37,16 @@ async function createTestServer() {
 
 async function requestJson(baseUrl, path) {
   const response = await fetch(`${baseUrl}${path}`);
+  assert(response.ok, `${path} should return 2xx`);
+  return response.json();
+}
+
+async function postJson(baseUrl, path, payload) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+    body: JSON.stringify(payload)
+  });
   assert(response.ok, `${path} should return 2xx`);
   return response.json();
 }
@@ -77,6 +87,20 @@ async function run() {
     const second = await requestChat(baseUrl, "再便宜点");
     const done = second.find((item) => item.event === "done");
     assert(done.data.conversationId === "smoke-demo", "done event should include conversationId");
+
+    const debug = await postJson(baseUrl, "/api/debug/retrieve", {
+      conversationId: "smoke-debug",
+      message: "推荐一款适合油皮的防晒霜",
+      includeMemory: false
+    });
+    assert(debug.ok === true, "debug retrieve should return ok");
+    assert(debug.retrieval.counts.filteredCandidates > 0, "debug retrieve should expose candidate count");
+    assert(debug.retrieval.products.length > 0, "debug retrieve should return product cards");
+
+    const reset = await postJson(baseUrl, "/api/conversations/reset", { conversationId: "smoke-demo" });
+    assert(reset.ok === true, "reset should return ok");
+    assert(reset.session.turnCount === 0, "reset should clear turns");
+    assert(reset.session.lastProductIds.length === 0, "reset should clear last products");
 
     const invalid = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
