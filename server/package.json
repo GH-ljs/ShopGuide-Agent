@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js",
-    "test:retrieval": "node src/retrieval.test.js"
+    "test:embedding": "node src/embedding.test.js",
+    "test:retrieval": "node src/retrieval.test.js",
+    "test:smoke": "node src/smoke.test.js",
+    "qdrant:health": "node src/qdrant.health.js",
+    "qdrant:ingest": "node src/qdrant.ingest.js",
+    "qdrant:test": "node src/qdrant.search.test.js"
   },
   "engines": {
     "node": ">=18"

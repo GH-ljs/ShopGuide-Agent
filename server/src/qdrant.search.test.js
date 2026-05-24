@@ -1,18 +1,19 @@
 // 文件职责：
-// 简单检索冒烟测试脚本，用来快速看检索结果是否合理。
+// 验证 Qdrant collection 已入库，并能按用户问题召回商品。
 
 import { config } from "./config.js";
 import { loadProducts } from "./dataLoader.js";
 import { retrieveProducts } from "./retriever.js";
 import { createSearchIndex } from "./vectorIndexFactory.js";
 
-// 这个文件不是单元测试框架，而是一个快速向量检索冒烟测试脚本。
 const products = loadProducts(config.datasetDir);
-const vectorIndex = createSearchIndex({ ...config, vectorStore: "local" }, products);
-const cases = ["推荐一款适合油皮的洗面奶", "200元以下的蓝牙耳机有哪些？", "帮我推荐跑鞋，要轻量的，预算500以内", "推荐防晒霜，但不要含酒精"];
+const qdrantConfig = { ...config, vectorStore: "qdrant" };
+const vectorIndex = createSearchIndex(qdrantConfig, products);
+const cases = ["推荐防晒霜", "推荐一款适合油皮的防晒霜", "推荐一款适合油皮的洗面奶"];
 
 for (const query of cases) {
   const result = await retrieveProducts(products, query, 3, vectorIndex);
+  if (result.length === 0) throw new Error(`Qdrant search returned no products for: ${query}`);
   console.log(`\nQuery: ${query}`);
   for (const product of result) {
     console.log(`- ${product.productId} ${product.title} ${product.basePrice}元`);

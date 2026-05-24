@@ -65,7 +65,7 @@ function matchesItemIntent(product, itemIntent) {
   return itemIntent.terms.some((term) => itemText.includes(term.toLowerCase()));
 }
 
-export function retrieveProducts(products, message, limit = 4, vectorIndex = createVectorIndex(products)) {
+export async function retrieveProducts(products, message, limit = 4, vectorIndex = createVectorIndex(products)) {
   const price = extractPriceConstraint(message);
   const negativeTerms = extractNegativeTerms(message);
   const inferredCategory = inferCategory(message);
@@ -79,7 +79,7 @@ export function retrieveProducts(products, message, limit = 4, vectorIndex = cre
   });
 }
 
-export function retrieveProductsWithState(products, message, state = {}, limit = 4, vectorIndex = createVectorIndex(products), parsed = null) {
+export async function retrieveProductsWithState(products, message, state = {}, limit = 4, vectorIndex = createVectorIndex(products), parsed = null) {
   const price = parsed?.price || extractPriceConstraint(message);
   const negativeTerms = [...(state.excludeTerms || []), ...(parsed?.negativeTerms || extractNegativeTerms(message))];
   const inferredCategory = state.category || parsed?.inferredCategory || inferCategory(message);
@@ -103,8 +103,8 @@ export function retrieveProductsWithState(products, message, state = {}, limit =
 
   if (candidates.length === 0) return [];
 
-  // 当前 MVP 使用本地词频向量 + 余弦相似度；后续可替换成真实 embedding + 向量数据库。
-  const ranked = vectorIndex.search(message, candidates, limit);
+  // vectorIndex.search 在 local 模式是同步计算，在 Qdrant 模式是网络请求；await 可同时兼容两种实现。
+  const ranked = await vectorIndex.search(message, candidates, limit);
   const positive = ranked.filter((item) => item.score > 0);
   if (positive.length === 0 && !hasHardConstraint) return [];
   const selected = positive.length > 0 ? positive : candidates.slice(0, limit).map((product) => ({ product, score: 0 }));

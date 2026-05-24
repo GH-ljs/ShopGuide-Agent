@@ -12,12 +12,15 @@
 - 读取 `ecommerce_agent_dataset` 中的 100 条商品 JSON 数据。
 - 标准化商品字段，包括商品 ID、标题、品牌、类目、价格、SKU、图片路径、详情描述、FAQ、评价等。
 - 实现本地文本向量检索 MVP，支持类目识别、商品类型识别、预算过滤、简单否定条件过滤和余弦相似度排序。
+- 增加可切换向量检索架构，当前默认 `VECTOR_STORE=local`，预留 `qdrant` 接入点。
+- 实现 Qdrant 商品向量入库和检索脚本，可切换到 `VECTOR_STORE=qdrant`。
+- 支持 `EMBEDDING_PROVIDER=ark` 调用 Doubao/Ark embedding API。
 - 实现 `POST /api/chat` SSE 流式接口，可以逐段返回导购回复。
 - 实现基于 `conversationId` 的内存多轮会话记忆，支持追问时继承最近上下文。
 - 实现结构化导购状态，保存类目、商品类型、预算、排除词、偏好和上一轮商品。
 - 实现结构化商品卡片返回，方便后续客户端展示商品图、标题、价格和推荐理由。
-- 实现无模型 Key 时的本地兜底回答，方便先跑通端到端链路。
-- 预留 Doubao/Ark 大模型流式调用逻辑，配置 `ARK_API_KEY` 后可切换到真实模型生成。
+- 实现无聊天模型 Key 时的本地兜底回答，方便先跑通端到端链路。
+- 聊天生成支持 Ark 或 DeepSeek 这类 OpenAI-compatible 接口。
 - 编写基础架构文档和后端运行说明。
 
 ## 项目结构
@@ -58,13 +61,73 @@ Loaded 100 products from ...
 Model streaming: disabled, using local fallback
 ```
 
-其中 `Model streaming: disabled` 表示还没有配置大模型 Key，当前使用本地规则兜底回答，这是正常的。
+其中 `Model streaming: disabled` 表示还没有配置聊天模型 Key，当前使用本地规则兜底回答，这是正常的。
+
+## 向量检索配置
+
+默认使用零依赖本地检索：
+
+```text
+VECTOR_STORE=local
+```
+
+已经支持 Qdrant 配置：
+
+```text
+VECTOR_STORE=qdrant
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION=shopguide_products
+EMBEDDING_PROVIDER=local
+EMBEDDING_DIMENSION=384
+```
+
+如果要使用 Doubao/Ark embedding：
+
+```text
+QDRANT_COLLECTION=shopguide_products_ark
+EMBEDDING_PROVIDER=ark
+EMBEDDING_DIMENSION=1024
+ARK_EMBEDDING_MODEL=你的 doubao-embedding-vision endpoint id
+ARK_EMBEDDING_PATH=/embeddings/multimodal
+ARK_API_KEY=你的火山方舟 API Key
+```
+
+如果聊天生成使用 DeepSeek：
+
+```text
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=你的 DeepSeek API Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+如果后续要切回 Doubao/Ark 聊天生成，只需要改回：
+
+```text
+LLM_PROVIDER=ark
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=你的 Ark 聊天模型 endpoint id
+ARK_API_KEY=你的火山方舟 API Key
+```
+
+注意：`EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套开关。比如你可以继续用 Doubao/Ark 做 embedding，同时用 DeepSeek 做聊天生成；这时 `ARK_API_KEY` 用于 embedding，`DEEPSEEK_API_KEY` 用于聊天生成。
+
+先启动 Qdrant，然后写入商品向量：
+
+```bash
+cd server
+node src/qdrant.ingest.js
+node src/qdrant.search.test.js
+```
+
+Qdrant 本地 Docker 配置说明见 [docs/qdrant.md](docs/qdrant.md)。
 
 ## 测试
 
 ```bash
 cd server
 node src/retrieval.test.js
+node src/smoke.test.js
 ```
 
 也可以访问健康检查接口：
@@ -79,6 +142,8 @@ http://localhost:3001/api/health
 - `GET /api/products`: 商品列表
 - `POST /api/chat`: SSE 流式导购对话
 
+详细接口文档见 [docs/api.md](docs/api.md)。
+
 `POST /api/chat` 请求体示例：
 
 ```json
@@ -92,7 +157,7 @@ http://localhost:3001/api/health
 
 ## 后续里程碑
 
-1. 将本地文本向量检索升级为 embedding + Qdrant/Chroma。
+1. 用 Doubao/Ark embedding 重新入库并验证真实语义检索效果。
 2. 强化反选约束、商品对比和购物车能力。
 3. 创建 Android Kotlin 客户端。
 4. 在客户端展示流式文字和商品卡片。

@@ -2,6 +2,7 @@
 // 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
 
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
+import { buildError, ERROR_CODES } from "./errors.js";
 import { streamModelAnswer } from "./llm.js";
 import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, updateSessionState } from "./memory.js";
 import { retrieveProductsWithState } from "./retriever.js";
@@ -49,7 +50,8 @@ export function createHandler({ config, products, vectorIndex }) {
       return sendJson(res, 200, {
         ok: true,
         productCount: products.length,
-        modelEnabled: Boolean(config.arkApiKey)
+        modelEnabled: Boolean(config.llmApiKey),
+        llmProvider: config.llmProvider
       });
     }
 
@@ -74,11 +76,11 @@ export function createHandler({ config, products, vectorIndex }) {
       try {
         body = await readJsonBody(req);
       } catch {
-        return sendJson(res, 400, { error: "Invalid JSON body" });
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
       }
 
       const message = String(body.message || "").trim();
-      if (!message) return sendJson(res, 400, { error: "message is required" });
+      if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
 
       const conversationId = String(body.conversationId || "default").trim() || "default";
       const session = getSession(conversationId);
@@ -87,7 +89,7 @@ export function createHandler({ config, products, vectorIndex }) {
       const retrievalQuery = buildRetrievalQuery(session, message);
 
       // 先检索商品，再把候选商品交给本地回答或大模型生成。
-      const matchedProducts = retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
+      const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
       const cards = buildProductCards(matchedProducts);
 
       res.writeHead(200, {
@@ -99,7 +101,7 @@ export function createHandler({ config, products, vectorIndex }) {
 
       try {
         let answerText = "";
-        if (config.arkApiKey) {
+        if (config.llmApiKey) {
           // 配置 Key 后走真实模型流式输出。
           for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
             answerText += token;
@@ -119,7 +121,7 @@ export function createHandler({ config, products, vectorIndex }) {
         writeSse(res, "products", { products: cards });
         writeSse(res, "done", { ok: true, conversationId });
       } catch (error) {
-        writeSse(res, "error", { message: error.message });
+        writeSse(res, "error", buildError(ERROR_CODES.MODEL_ERROR, "模型服务暂时不可用", error.message));
       } finally {
         res.end();
       }
@@ -138,6 +140,6 @@ export function createHandler({ config, products, vectorIndex }) {
       return;
     }
 
-    sendJson(res, 404, { error: "Not found" });
+    sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "接口不存在"));
   };
 }
