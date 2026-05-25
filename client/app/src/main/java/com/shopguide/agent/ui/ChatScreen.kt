@@ -13,20 +13,26 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
-import com.shopguide.agent.model.ProductCard
+import com.shopguide.agent.network.ChatApi
 import com.shopguide.agent.network.HealthApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @Composable
 fun ChatScreen() {
     var input by remember { mutableStateOf("") }
     var isBackendHealthy by remember { mutableStateOf<Boolean?>(null) }
+    var isStreaming by remember { mutableStateOf(false) }
+    val conversationId = remember { UUID.randomUUID().toString() }
+    val scope = rememberCoroutineScope()
     val messages = remember {
         mutableStateListOf(
             ChatMessage(
@@ -38,7 +44,6 @@ fun ChatScreen() {
     }
 
     LaunchedEffect(Unit) {
-        // Network requests must run on an IO thread, then write the result back to Compose state.
         isBackendHealthy = withContext(Dispatchers.IO) {
             runCatching { HealthApi.checkHealth() }.getOrDefault(false)
         }
@@ -61,10 +66,11 @@ fun ChatScreen() {
 
         InputBar(
             value = input,
+            enabled = !isStreaming,
             onValueChange = { input = it },
             onSend = {
                 val userText = input.trim()
-                if (userText.isEmpty()) return@InputBar
+                if (userText.isEmpty() || isStreaming) return@InputBar
 
                 messages.add(
                     ChatMessage(
@@ -74,24 +80,63 @@ fun ChatScreen() {
                     )
                 )
 
-                // This temporary mock reply keeps the UI usable before the SSE chat API is connected.
+                val assistantMessageId = messages.size + 1
                 messages.add(
                     ChatMessage(
-                        id = messages.size + 1,
+                        id = assistantMessageId,
                         role = MessageRole.Assistant,
-                        text = "Received: $userText\nNext, this reply will come from /api/chat as an SSE stream.",
-                        products = listOf(
-                            ProductCard(
-                                title = "Sample product card",
-                                brand = "ShopGuide",
-                                price = "CNY 199",
-                                reason = "This is placeholder data. Later it will come from the backend products event."
-                            )
-                        )
+                        text = ""
                     )
                 )
                 input = ""
+                isStreaming = true
+
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        ChatApi.streamChat(
+                            conversationId = conversationId,
+                            message = userText,
+                            onToken = { token ->
+                                scope.launch {
+                                    updateAssistantMessage(messages, assistantMessageId) { old ->
+                                        old.copy(text = old.text + token)
+                                    }
+                                }
+                            },
+                            onProducts = { products ->
+                                scope.launch {
+                                    updateAssistantMessage(messages, assistantMessageId) { old ->
+                                        old.copy(products = products)
+                                    }
+                                }
+                            },
+                            onDone = {
+                                scope.launch { isStreaming = false }
+                            },
+                            onError = { message ->
+                                scope.launch {
+                                    updateAssistantMessage(messages, assistantMessageId) { old ->
+                                        old.copy(text = old.text.ifBlank { "Request failed: $message" })
+                                    }
+                                    isStreaming = false
+                                }
+                            }
+                        )
+                    }
+                    isStreaming = false
+                }
             }
         )
+    }
+}
+
+private fun updateAssistantMessage(
+    messages: MutableList<ChatMessage>,
+    messageId: Int,
+    transform: (ChatMessage) -> ChatMessage
+) {
+    val index = messages.indexOfFirst { it.id == messageId }
+    if (index >= 0) {
+        messages[index] = transform(messages[index])
     }
 }
