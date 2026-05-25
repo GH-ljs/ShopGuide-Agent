@@ -2,6 +2,15 @@
 .env.*
 !.env.example
 
+# Android local files
+.gradle/
+.idea/
+local.properties
+client/.gradle/
+client/.idea/
+client/local.properties
+client/**/build/
+
 node_modules/
 dist/
 build/
