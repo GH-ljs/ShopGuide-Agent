@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun InputBar(
     value: String,
+    enabled: Boolean,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit
 ) {
@@ -32,12 +33,16 @@ fun InputBar(
             modifier = Modifier.weight(1f),
             value = value,
             onValueChange = onValueChange,
+            enabled = enabled,
             placeholder = { Text("Enter your shopping need") },
             singleLine = false,
             maxLines = 3
         )
-        Button(onClick = onSend) {
-            Text("Send")
+        Button(
+            onClick = onSend,
+            enabled = enabled
+        ) {
+            Text(if (enabled) "Send" else "Sending")
         }
     }
 }
