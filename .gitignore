@@ -2,13 +2,24 @@
 .env.*
 !.env.example
 
+# Android local files
+.gradle/
+.idea/
+local.properties
+client/.gradle/
+client/.idea/
+client/local.properties
+client/**/build/
+
 node_modules/
 dist/
 build/
+qdrant_storage/
 .DS_Store
 Thumbs.db
 
 *.log
+response.txt
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

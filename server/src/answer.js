@@ -21,7 +21,7 @@ export function buildProductCards(products) {
 }
 
 // 没有配置模型 Key 时使用本地兜底回答，保证项目早期也能演示完整链路。
-export function buildLocalAnswer(message, products, history = []) {
+export function buildLocalAnswer(message, products, history = [], state = {}) {
   if (products.length === 0) {
     return "我在当前商品库里没有找到足够匹配的商品。你可以换一个预算、类目或使用场景再问我。";
   }
@@ -36,11 +36,12 @@ export function buildLocalAnswer(message, products, history = []) {
   });
   const guardrail = "以上推荐只基于当前商品库信息，价格和规格以商品卡片/详情为准，我不会额外编造优惠或库存。";
 
-  return [intro, ...lines, guardrail].join("\n");
+  const stateNote = state.maxPrice ? `我已经按 ${state.maxPrice} 元以内继续筛选。` : "";
+  return [intro, stateNote, ...lines, guardrail].filter(Boolean).join("\n");
 }
 
 // 构造发给大模型的 Prompt。关键约束是只能基于检索到的商品上下文回答。
-export function buildModelMessages(message, products, history = []) {
+export function buildModelMessages(message, products, history = [], state = {}) {
   const productContext = products.map((product, index) => ({
     index: index + 1,
     product_id: product.productId,
@@ -64,7 +65,7 @@ export function buildModelMessages(message, products, history = []) {
     })),
     {
       role: "user",
-      content: `用户需求：${message}\n\n商品上下文：${JSON.stringify(productContext, null, 2)}`
+      content: `用户需求：${message}\n\n结构化导购状态：${JSON.stringify(state, null, 2)}\n\n商品上下文：${JSON.stringify(productContext, null, 2)}`
     }
   ];
 }

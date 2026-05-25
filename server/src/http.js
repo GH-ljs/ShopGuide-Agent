@@ -2,9 +2,10 @@
 // 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
 
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
+import { buildError, ERROR_CODES } from "./errors.js";
 import { streamModelAnswer } from "./llm.js";
-import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts } from "./memory.js";
-import { retrieveProducts } from "./retriever.js";
+import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, resetSession, snapshotSession, updateSessionState } from "./memory.js";
+import { retrieveProductsWithDebug, retrieveProductsWithState } from "./retriever.js";
 
 // 普通 JSON 响应工具，主要给 health/products/错误返回使用。
 function sendJson(res, status, payload) {
@@ -49,7 +50,8 @@ export function createHandler({ config, products, vectorIndex }) {
       return sendJson(res, 200, {
         ok: true,
         productCount: products.length,
-        modelEnabled: Boolean(config.arkApiKey)
+        modelEnabled: Boolean(config.llmApiKey),
+        llmProvider: config.llmProvider
       });
     }
 
@@ -69,24 +71,75 @@ export function createHandler({ config, products, vectorIndex }) {
       );
     }
 
+    if (req.method === "POST" && url.pathname === "/api/conversations/reset") {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
+      }
+
+      const conversationId = String(body.conversationId || "default").trim() || "default";
+      // 重置会话只清空内存状态，不影响商品索引和 Qdrant 数据。
+      const session = resetSession(conversationId);
+      return sendJson(res, 200, {
+        ok: true,
+        conversationId,
+        session: snapshotSession(session)
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/debug/retrieve") {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
+      }
+
+      const message = String(body.message || "").trim();
+      if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
+
+      const conversationId = String(body.conversationId || "debug").trim() || "debug";
+      const includeMemory = body.includeMemory !== false;
+      const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
+      const state = updateSessionState(session, message);
+      const retrievalQuery = buildRetrievalQuery(session, message);
+      const debug = await retrieveProductsWithDebug(products, retrievalQuery, state, Number(body.limit || 4), vectorIndex);
+
+      return sendJson(res, 200, {
+        ok: true,
+        conversationId,
+        includeMemory,
+        session: snapshotSession(session),
+        originalMessage: message,
+        retrievalQuery,
+        retrieval: {
+          ...debug,
+          products: buildProductCards(debug.products)
+        }
+      });
+    }
+
     if (req.method === "POST" && url.pathname === "/api/chat") {
       let body;
       try {
         body = await readJsonBody(req);
       } catch {
-        return sendJson(res, 400, { error: "Invalid JSON body" });
+        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
       }
 
       const message = String(body.message || "").trim();
-      if (!message) return sendJson(res, 400, { error: "message is required" });
+      if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
 
       const conversationId = String(body.conversationId || "default").trim() || "default";
       const session = getSession(conversationId);
+      const state = updateSessionState(session, message);
       const history = getRecentTurns(session);
       const retrievalQuery = buildRetrievalQuery(session, message);
 
       // 先检索商品，再把候选商品交给本地回答或大模型生成。
-      const matchedProducts = retrieveProducts(products, retrievalQuery, 4, vectorIndex);
+      const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
       const cards = buildProductCards(matchedProducts);
 
       res.writeHead(200, {
@@ -98,15 +151,15 @@ export function createHandler({ config, products, vectorIndex }) {
 
       try {
         let answerText = "";
-        if (config.arkApiKey) {
+        if (config.llmApiKey) {
           // 配置 Key 后走真实模型流式输出。
-          for await (const token of streamModelAnswer(config, message, matchedProducts, history)) {
+          for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
             answerText += token;
             writeSse(res, "token", { content: token });
           }
         } else {
           // 未配置 Key 时走本地兜底，保证后端和客户端联调不被模型依赖阻塞。
-          answerText = buildLocalAnswer(message, matchedProducts, history);
+          answerText = buildLocalAnswer(message, matchedProducts, history, state);
           await streamText(res, answerText);
         }
 
@@ -118,7 +171,7 @@ export function createHandler({ config, products, vectorIndex }) {
         writeSse(res, "products", { products: cards });
         writeSse(res, "done", { ok: true, conversationId });
       } catch (error) {
-        writeSse(res, "error", { message: error.message });
+        writeSse(res, "error", buildError(ERROR_CODES.MODEL_ERROR, "模型服务暂时不可用", error.message));
       } finally {
         res.end();
       }
@@ -137,6 +190,6 @@ export function createHandler({ config, products, vectorIndex }) {
       return;
     }
 
-    sendJson(res, 404, { error: "Not found" });
+    sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "接口不存在"));
   };
 }

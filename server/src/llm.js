@@ -1,19 +1,48 @@
 // 文件职责：
-// 调用 Doubao/Ark 的 OpenAI-compatible 流式接口，解析模型返回的 token。
+// 调用 OpenAI-compatible 聊天模型接口，支持 Doubao/Ark 和 DeepSeek 两种 provider。
 
 import { buildModelMessages } from "./answer.js";
 
-// 调用 Doubao/Ark 的 OpenAI-compatible chat completions，并把流式 token 逐个 yield 出去。
-export async function* streamModelAnswer(config, message, products, history = []) {
-  const response = await fetch(`${config.arkBaseUrl}/chat/completions`, {
+function getChatModelConfig(config) {
+  if (config.llmProvider === "deepseek") {
+    return {
+      provider: "deepseek",
+      apiKey: config.deepseekApiKey,
+      baseUrl: config.deepseekBaseUrl,
+      model: config.deepseekModel
+    };
+  }
+
+  return {
+    provider: "ark",
+    apiKey: config.arkApiKey,
+    baseUrl: config.arkBaseUrl,
+    model: config.arkModel
+  };
+}
+
+function parseStreamDelta(payload) {
+  const json = JSON.parse(payload);
+  // DeepSeek 和 Ark 都兼容 OpenAI 流式响应，正文增量通常放在 choices[0].delta.content。
+  return json.choices?.[0]?.delta?.content || "";
+}
+
+// 调用 OpenAI-compatible chat completions，并把流式 token 逐个 yield 出去。
+export async function* streamModelAnswer(config, message, products, history = [], state = {}) {
+  const modelConfig = getChatModelConfig(config);
+  if (!modelConfig.apiKey) {
+    throw new Error(`LLM_PROVIDER=${modelConfig.provider} 需要配置对应 API Key`);
+  }
+
+  const response = await fetch(`${modelConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.arkApiKey}`
+      Authorization: `Bearer ${modelConfig.apiKey}`
     },
     body: JSON.stringify({
-      model: config.arkModel,
-      messages: buildModelMessages(message, products, history),
+      model: modelConfig.model,
+      messages: buildModelMessages(message, products, history, state),
       stream: true,
       temperature: 0.3
     })
@@ -38,9 +67,7 @@ export async function* streamModelAnswer(config, message, products, history = []
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
       if (payload === "[DONE]") return;
-      const json = JSON.parse(payload);
-      // OpenAI-compatible 流式响应的正文增量通常放在 choices[0].delta.content。
-      const delta = json.choices?.[0]?.delta?.content;
+      const delta = parseStreamDelta(payload);
       if (delta) yield delta;
     }
   }
