@@ -68,7 +68,7 @@ object ChatApi {
                 }
             }
         } catch (error: Exception) {
-            onError(error.message ?: "Chat request failed")
+            onError(error.message ?: "聊天请求失败")
         } finally {
             connection.disconnect()
         }
@@ -110,7 +110,9 @@ object ChatApi {
 
             "error" -> {
                 val error = JSONObject(data).optJSONObject("error")
-                onError(error?.optString("message") ?: "Backend returned an error")
+                val message = error?.optString("message") ?: "后端返回错误"
+                val details = error?.optString("details").orEmpty()
+                onError(if (details.isBlank()) message else "$message：$details")
             }
         }
     }

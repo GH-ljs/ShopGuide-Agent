@@ -34,7 +34,7 @@ fun InputBar(
             value = value,
             onValueChange = onValueChange,
             enabled = enabled,
-            placeholder = { Text("Enter your shopping need") },
+            placeholder = { Text("输入你的购物需求") },
             singleLine = false,
             maxLines = 3
         )
@@ -42,7 +42,7 @@ fun InputBar(
             onClick = onSend,
             enabled = enabled
         ) {
-            Text(if (enabled) "Send" else "Sending")
+            Text(if (enabled) "发送" else "发送中")
         }
     }
 }

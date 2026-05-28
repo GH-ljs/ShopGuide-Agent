@@ -34,19 +34,24 @@ export async function* streamModelAnswer(config, message, products, history = []
     throw new Error(`LLM_PROVIDER=${modelConfig.provider} 需要配置对应 API Key`);
   }
 
-  const response = await fetch(`${modelConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${modelConfig.apiKey}`
-    },
-    body: JSON.stringify({
-      model: modelConfig.model,
-      messages: buildModelMessages(message, products, history, state),
-      stream: true,
-      temperature: 0.3
-    })
-  });
+  let response;
+  try {
+    response = await fetch(`${modelConfig.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${modelConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelConfig.model,
+        messages: buildModelMessages(message, products, history, state),
+        stream: true,
+        temperature: 0.3
+      })
+    });
+  } catch (error) {
+    throw new Error(`${modelConfig.provider} 聊天模型连接失败：${error.message}`);
+  }
 
   if (!response.ok || !response.body) {
     const body = await response.text().catch(() => "");

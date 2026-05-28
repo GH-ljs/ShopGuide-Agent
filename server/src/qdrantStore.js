@@ -13,13 +13,18 @@ function collectionUrl(config, suffix = "") {
 }
 
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+  } catch (error) {
+    throw new Error(`Qdrant 连接失败：${error.message}`);
+  }
 
   if (response.status === 404) return { response, body: null };
 

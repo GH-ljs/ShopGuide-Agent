@@ -76,24 +76,29 @@ async function embedTextWithArk(config, text) {
 
   // doubao-embedding-vision 是多模态 embedding，文本输入用 type=text。
   // 如果后续接图片，可在 input 中追加 type=image_url 的内容。
-  const response = await fetch(arkEmbeddingUrl(config), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.arkApiKey}`
-    },
-    body: JSON.stringify({
-      model: config.arkEmbeddingModel,
-      encoding_format: "float",
-      dimensions: config.embeddingDimension,
-      input: [
-        {
-          type: "text",
-          text
-        }
-      ]
-    })
-  });
+  let response;
+  try {
+    response = await fetch(arkEmbeddingUrl(config), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.arkApiKey}`
+      },
+      body: JSON.stringify({
+        model: config.arkEmbeddingModel,
+        encoding_format: "float",
+        dimensions: config.embeddingDimension,
+        input: [
+          {
+            type: "text",
+            text
+          }
+        ]
+      })
+    });
+  } catch (error) {
+    throw new Error(`Ark embedding 连接失败：${error.message}`);
+  }
 
   const responseText = await response.text();
   const body = responseText ? JSON.parse(responseText) : null;

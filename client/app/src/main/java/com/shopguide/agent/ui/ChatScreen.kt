@@ -38,7 +38,7 @@ fun ChatScreen() {
             ChatMessage(
                 id = 1,
                 role = MessageRole.Assistant,
-                text = "Hi, I am your shopping guide. Tell me your budget, category, and preferences."
+                text = "你好，我是智能导购助手。你可以直接说预算、品类和偏好，我会从商品库里帮你推荐。"
             )
         )
     }
@@ -116,7 +116,7 @@ fun ChatScreen() {
                             onError = { message ->
                                 scope.launch {
                                     updateAssistantMessage(messages, assistantMessageId) { old ->
-                                        old.copy(text = old.text.ifBlank { "Request failed: $message" })
+                                        old.copy(text = old.text.ifBlank { "请求失败：$message" })
                                     }
                                     isStreaming = false
                                 }

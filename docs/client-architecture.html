@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShopGuide Agent - 客户端架构与端到端连接</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242736;
+    --border: #2e3148;
+    --text: #e1e4ed;
+    --text2: #959bb5;
+    --accent: #2F6FED;
+    --accent2: #4ecdc4;
+    --green: #5cb88d;
+    --orange: #e8a454;
+    --red: #e0556a;
+    --purple: #b392f0;
+    --pink: #f778ba;
+    --kotlin: #7F52FF;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  .hero {
+    background: linear-gradient(135deg, #1a1d27 0%, #1f2640 50%, #1a1d27 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 48px 24px;
+    text-align: center;
+  }
+  .hero h1 {
+    font-size: 2.4rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--green), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero p { color: var(--text2); margin-top: 8px; font-size: 1.05rem; }
+  .badge-row { display: flex; justify-content: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .badge {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 5px 16px; font-size: 0.82rem; color: var(--text2);
+  }
+  .badge.hl { border-color: var(--green); color: var(--green); }
+  .badge.hl2 { border-color: var(--kotlin); color: var(--kotlin); }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+  .section { margin-bottom: 48px; }
+  .section-title {
+    font-size: 1.35rem; font-weight: 700; margin-bottom: 20px;
+    padding-left: 12px; border-left: 3px solid var(--green);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .section-title .icon { font-size: 1.4rem; }
+  .s2 .section-title { border-left-color: var(--accent2); }
+  .s3 .section-title { border-left-color: var(--accent); }
+  .s4 .section-title { border-left-color: var(--purple); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px;
+  }
+  .card-title {
+    font-size: 1.05rem; font-weight: 600; margin-bottom: 12px;
+    color: var(--accent);
+  }
+
+  .arch-svg-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden; padding: 16px 0;
+  }
+
+  /* Module grid */
+  .module-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px;
+  }
+  .mod-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; transition: border-color 0.2s;
+  }
+  .mod-card:hover { border-color: var(--green); }
+  .mod-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .mod-icon {
+    width: 36px; height: 36px; border-radius: 8px; display: flex;
+    align-items: center; justify-content: center; font-size: 1.1rem;
+  }
+  .mod-icon.ui     { background: rgba(47,111,237,0.15); color: var(--accent); }
+  .mod-icon.net    { background: rgba(232,164,84,0.15); color: var(--orange); }
+  .mod-icon.model  { background: rgba(92,184,141,0.15); color: var(--green); }
+  .mod-icon.entry  { background: rgba(127,82,255,0.15); color: var(--kotlin); }
+
+  .mod-name { font-weight: 600; font-size: 1rem; }
+  .mod-file { color: var(--text2); font-size: 0.78rem; }
+  .mod-desc { color: var(--text2); font-size: 0.85rem; line-height: 1.55; margin-top: 4px; }
+
+  /* Pipeline */
+  .pipeline {
+    display: flex; align-items: center; gap: 8px; overflow-x: auto;
+    padding: 20px 0; flex-wrap: nowrap;
+  }
+  .pipe-step {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 20px; text-align: center;
+    min-width: 140px; flex-shrink: 0;
+  }
+  .pipe-step .step-num {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--green); color: #fff; font-size: 0.75rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-bottom: 6px; font-weight: 700;
+  }
+  .pipe-step .step-title { font-weight: 600; font-size: 0.92rem; }
+  .pipe-step .step-file { color: var(--text2); font-size: 0.75rem; margin-top: 4px; }
+  .pipe-arrow { color: var(--text2); font-size: 1.2rem; flex-shrink: 0; margin: 0 2px; }
+
+  /* highlight box */
+  .highlight-box {
+    background: rgba(47,111,237,0.08); border: 1px solid rgba(47,111,237,0.2);
+    border-radius: 8px; padding: 16px 20px; margin-top: 16px;
+  }
+  .highlight-box .hl-title { font-weight: 600; color: var(--accent); margin-bottom: 6px; }
+  .highlight-box ul { color: var(--text2); font-size: 0.88rem; padding-left: 18px; }
+  .highlight-box li { margin-bottom: 4px; }
+
+  pre { margin: 0; }
+  .code-block {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 18px; font-family: "SF Mono","Fira Code","Cascadia Code",monospace;
+    font-size: 0.8rem; line-height: 1.75; color: var(--text2); overflow-x: auto;
+  }
+  .code-block .kw  { color: var(--purple); }
+  .code-block .str { color: var(--green); }
+  .code-block .fn  { color: var(--accent); }
+  .code-block .cmt { color: #5c6370; font-style: italic; }
+
+  .full-width { grid-column: 1 / -1; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .hero h1 { font-size: 1.6rem; }
+    .module-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>ShopGuide Agent 客户端架构</h1>
+  <p>Android 原生 App · Kotlin + Jetpack Compose · SSE 流式对话</p>
+  <div class="badge-row">
+    <span class="badge hl2">Kotlin</span>
+    <span class="badge hl2">Jetpack Compose</span>
+    <span class="badge hl">Android 原生</span>
+    <span class="badge">minSdk 26</span>
+    <span class="badge">SSE 流式</span>
+    <span class="badge">零第三方网络库</span>
+    <span class="badge">Material 3</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ===== 1. Architecture Overview ===== -->
+<div class="section s2">
+  <div class="section-title"><span class="icon">🏗️</span> 客户端分层架构</div>
+  <div class="arch-svg-wrap">
+    <svg viewBox="0 0 1080 520" style="width:100%; max-width:1080px; display:block; margin:0 auto;">
+      <defs>
+        <marker id="arrowGray" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+          <polygon points="0 0, 7 2.5, 0 5" fill="#959bb5" />
+        </marker>
+        <marker id="arrowGreen" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+          <polygon points="0 0, 7 2.5, 0 5" fill="#5cb88d" />
+        </marker>
+        <marker id="arrowBlue" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+          <polygon points="0 0, 7 2.5, 0 5" fill="#2F6FED" />
+        </marker>
+        <filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.12"/></filter>
+      </defs>
+
+      <!-- === Layer 1: UI Layer === -->
+      <rect x="30" y="20" width="1020" height="170" rx="14" fill="#1a1d27" stroke="#2F6FED" stroke-width="1.3" filter="url(#shadow)"/>
+      <rect x="30" y="20" width="160" height="28" rx="10" fill="#2F6FED"/>
+      <text x="110" y="39" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">UI 层 (Compose)</text>
+
+      <!-- ChatScreen -->
+      <rect x="55" y="60" width="230" height="115" rx="10" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="170" y="84" text-anchor="middle" fill="#2F6FED" font-size="11" font-weight="600">ChatScreen</text>
+      <text x="170" y="102" text-anchor="middle" fill="#959bb5" font-size="8.5">根 Composable · 状态管理</text>
+      <text x="170" y="118" text-anchor="middle" fill="#959bb5" font-size="8.5">conversationId(UUID)</text>
+      <text x="170" y="134" text-anchor="middle" fill="#959bb5" font-size="8.5">messages (mutableStateListOf)</text>
+      <text x="170" y="150" text-anchor="middle" fill="#959bb5" font-size="8.5">isStreaming / isBackendHealthy</text>
+      <text x="170" y="166" text-anchor="middle" fill="#959bb5" font-size="8.5">CoroutineScope → IO dispatch</text>
+
+      <!-- Header -->
+      <rect x="305" y="60" width="170" height="52" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="390" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10" font-weight="600">Header</text>
+      <text x="390" y="100" text-anchor="middle" fill="#959bb5" font-size="8.5">标题 · 后端连接状态指示</text>
+
+      <!-- InputBar -->
+      <rect x="490" y="60" width="170" height="52" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="575" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10" font-weight="600">InputBar</text>
+      <text x="575" y="100" text-anchor="middle" fill="#959bb5" font-size="8.5">多行输入 · 发送按钮 · 流式中禁用</text>
+
+      <!-- MessageBubble -->
+      <rect x="680" y="60" width="170" height="52" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="765" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10" font-weight="600">MessageBubble</text>
+      <text x="765" y="100" text-anchor="middle" fill="#959bb5" font-size="8.5">用户/助手气泡 · 左右布局</text>
+
+      <!-- ProductCardView -->
+      <rect x="870" y="60" width="155" height="52" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="947" y="82" text-anchor="middle" fill="#e1e4ed" font-size="10" font-weight="600">ProductCardView</text>
+      <text x="947" y="100" text-anchor="middle" fill="#959bb5" font-size="8.5">Card · 标题 · 品牌 · 价格 · 推荐理由</text>
+
+      <!-- === Layer 2: Model Layer === -->
+      <rect x="30" y="220" width="1020" height="80" rx="14" fill="#1a1d27" stroke="#5cb88d" stroke-width="1.3" filter="url(#shadow)"/>
+      <rect x="30" y="220" width="170" height="28" rx="10" fill="#5cb88d"/>
+      <text x="115" y="239" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Model 层 (数据模型)</text>
+
+      <rect x="55" y="256" width="220" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="165" y="278" text-anchor="middle" fill="#5cb88d" font-size="10" font-weight="600">ChatMessage</text>
+      <text x="310" y="278" fill="#959bb5" font-size="8.5">id (Int) · role (MessageRole) · text (String) · products (List&lt;ProductCard&gt;)</text>
+
+      <rect x="400" y="256" width="180" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="490" y="278" text-anchor="middle" fill="#5cb88d" font-size="10" font-weight="600">MessageRole</text>
+      <text x="610" y="278" fill="#959bb5" font-size="8.5">enum: User | Assistant</text>
+
+      <rect x="680" y="256" width="200" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="780" y="278" text-anchor="middle" fill="#5cb88d" font-size="10" font-weight="600">ProductCard</text>
+      <text x="910" y="278" fill="#959bb5" font-size="8.5">title · brand · price · reason</text>
+
+      <!-- === Layer 3: Network Layer === -->
+      <rect x="30" y="330" width="1020" height="80" rx="14" fill="#1a1d27" stroke="#e8a454" stroke-width="1.3" filter="url(#shadow)"/>
+      <rect x="30" y="330" width="185" height="28" rx="10" fill="#e8a454"/>
+      <text x="122" y="349" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">Network 层 (网络)</text>
+
+      <rect x="55" y="366" width="180" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="145" y="388" text-anchor="middle" fill="#e8a454" font-size="10" font-weight="600">ApiConfig</text>
+      <text x="270" y="388" fill="#959bb5" font-size="8.5">BASE_URL = http://10.0.2.2:3001</text>
+
+      <rect x="400" y="366" width="300" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="550" y="388" text-anchor="middle" fill="#e8a454" font-size="10" font-weight="600">ChatApi</text>
+      <text x="730" y="388" fill="#959bb5" font-size="8.5">streamChat() · SSE 逐行解析 · HttpURLConnection</text>
+
+      <rect x="740" y="366" width="180" height="34" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="830" y="388" text-anchor="middle" fill="#e8a454" font-size="10" font-weight="600">HealthApi</text>
+      <text x="950" y="388" fill="#959bb5" font-size="8.5">checkHealth() → GET /api/health</text>
+
+      <!-- === Between-layer arrows === -->
+      <line x1="540" y1="190" x2="540" y2="220" stroke="#959bb5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowGray)"/>
+      <line x1="540" y1="300" x2="540" y2="330" stroke="#959bb5" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arrowGray)"/>
+
+      <!-- === Entry point === -->
+      <rect x="30" y="440" width="180" height="32" rx="8" fill="#1a1d27" stroke="#7F52FF" stroke-width="1.2"/>
+      <text x="120" y="461" text-anchor="middle" fill="#7F52FF" font-size="10" font-weight="600">MainActivity (入口)</text>
+
+      <!-- === Backend box === -->
+      <rect x="480" y="435" width="570" height="70" rx="12" fill="#1a1d27" stroke="#4ecdc4" stroke-width="1.3" filter="url(#shadow)"/>
+      <text x="765" y="458" text-anchor="middle" fill="#4ecdc4" font-size="11" font-weight="700">Node.js 后端</text>
+      <text x="765" y="476" text-anchor="middle" fill="#959bb5" font-size="9">10.0.2.2:3001 · POST /api/chat · text/event-stream</text>
+      <text x="765" y="494" text-anchor="middle" fill="#959bb5" font-size="9">event: token → event: products → event: done</text>
+
+      <!-- Arrows to backend -->
+      <line x1="210" y1="456" x2="480" y2="460" stroke="#5cb88d" stroke-width="1.2" marker-end="url(#arrowGreen)"/>
+      <text x="345" y="452" text-anchor="middle" fill="#5cb88d" font-size="8">setContent → ShopGuideApp → ChatScreen</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ===== 2. Package & Module Details ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">📦</span> 模块详解</div>
+  <div class="module-grid">
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon entry">🚀</div>
+        <div>
+          <div class="mod-name">入口 · MainActivity.kt</div>
+          <div class="mod-file">client/app/src/main/java/.../MainActivity.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        <strong>单 Activity 架构</strong>，继承 ComponentActivity，通过 <code>setContent {}</code> 挂载 Compose UI 树。
+        <code>ShopGuideApp()</code> 包裹 MaterialTheme + Surface（背景色 #F6F7F9），根节点为 ChatScreen。
+        无 Fragment、无 Navigation 组件，MVP 阶段极简设计。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon ui">🎨</div>
+        <div>
+          <div class="mod-name">ChatScreen.kt — 状态管理中心</div>
+          <div class="mod-file">client/app/src/main/java/.../ui/ChatScreen.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        整个对话的核心状态全部在此管理：<br>
+        <code>messages</code> — mutableStateListOf 驱动 LazyColumn 增量更新<br>
+        <code>isStreaming</code> — 控制输入框禁用和按钮文本切换<br>
+        <code>isBackendHealthy</code> — 启动时通过 LaunchedEffect + HealthApi 检测<br>
+        <code>conversationId</code> — UUID 生成，一次会话保持同一 ID<br><br>
+        <strong>流式更新策略：</strong>先 add 空的 Assistant 占位消息，收到 token 回调时用 <code>updateAssistantMessage</code> 做 text 增量拼接；收到 products 回调时替换整组商品卡片。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon ui">🎨</div>
+        <div>
+          <div class="mod-name">Header.kt — 连接状态指示</div>
+          <div class="mod-file">client/app/src/main/java/.../ui/Header.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        纯展示组件，接收 <code>isBackendHealthy: Boolean?</code>。<br>
+        <code>null</code> → "正在检查后端连接"（灰色）<br>
+        <code>true</code> → "后端已连接"（绿色 #168A45）<br>
+        <code>false</code> → "后端未连接"（红色 #B42318）<br>
+        白色背景，标题 "ShopGuide Agent" + 副标题 "RAG 电商智能导购"。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon ui">🎨</div>
+        <div>
+          <div class="mod-name">InputBar.kt — 输入交互</div>
+          <div class="mod-file">client/app/src/main/java/.../ui/InputBar.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        底栏固定输入区：OutlinedTextField（最多 3 行）+ 发送按钮。<br>
+        <code>enabled</code> 参数在 <code>isStreaming == true</code> 时置灰，防止并发请求。<br>
+        按钮文本根据 enabled 状态切换 "发送"/"发送中"。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon ui">🎨</div>
+        <div>
+          <div class="mod-name">MessageBubble.kt — 消息气泡</div>
+          <div class="mod-file">client/app/src/main/java/.../ui/MessageBubble.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        根据 <code>message.role</code> 决定布局方向：<br>
+        <strong>User：</strong>右对齐，蓝色背景（#2F6FED），白色文字，占宽 78%<br>
+        <strong>Assistant：</strong>左对齐，白色背景，深色文字，占宽 92%，下方紧接商品卡片列表<br>
+        当 <code>message.products</code> 非空时，在气泡下方渲染 ProductCardView 列表。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon ui">🎨</div>
+        <div>
+          <div class="mod-name">ProductCardView.kt — 商品卡片</div>
+          <div class="mod-file">client/app/src/main/java/.../ui/ProductCardView.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        Material 3 Card 组件：白色容器、1dp 阴影、8dp 圆角。<br>
+        展示字段：<strong>title</strong>（标题加粗）→ <strong>brand + price</strong>（蓝色 #2F6FED）→ <strong>reason</strong>（灰色推荐理由）。<br>
+        当前为纯文本卡片，后续可扩展商品图片和点击跳转详情。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon net">🌐</div>
+        <div>
+          <div class="mod-name">ChatApi.kt — SSE 流式客户端</div>
+          <div class="mod-file">client/app/src/main/java/.../network/ChatApi.kt</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        核心网络层，使用 <code>HttpURLConnection</code>（零第三方依赖）实现 SSE 消费：<br>
+        1) POST JSON 请求体到 <code>/api/chat</code><br>
+        2) BufferedReader 逐行读取 <code>text/event-stream</code> 响应<br>
+        3) 按 <code>event:</code>/<code>data:</code> 行对解析，分发 4 种回调<br>
+        4) price 字段做格式化处理（Number→"CNY xxx"）<br>
+        超时：connect 5s / read 60s。异常和 HTTP 错误统一走 onError。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon net">🌐</div>
+        <div>
+          <div class="mod-name">ApiConfig.kt + HealthApi.kt</div>
+          <div class="mod-file">client/app/src/main/java/.../network/</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        <strong>ApiConfig：</strong>硬编码 <code>BASE_URL = "http://10.0.2.2:3001"</code>。Android 模拟器通过 10.0.2.2 访问宿主机 localhost。<br>
+        <strong>HealthApi：</strong>GET <code>/api/health</code>，超时 3s，返回 Boolean，供 Header 展示连接状态。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon model">📋</div>
+        <div>
+          <div class="mod-name">Model — 数据类</div>
+          <div class="mod-file">client/app/src/main/java/.../model/</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        <strong>ChatMessage：</strong>id + role + text + products，data class 支持 copy() 做增量更新。<br>
+        <strong>MessageRole：</strong>枚举 User/Assistant，避免字符串拼写错误。<br>
+        <strong>ProductCard：</strong>title/brand/price/reason，与后端 SSE products 事件字段对齐。
+      </div>
+    </div>
+
+    <div class="mod-card">
+      <div class="mod-header">
+        <div class="mod-icon entry">🔧</div>
+        <div>
+          <div class="mod-name">构建配置 & 权限</div>
+          <div class="mod-file">build.gradle.kts + AndroidManifest.xml</div>
+        </div>
+      </div>
+      <div class="mod-desc">
+        <strong>compileSdk 36 · minSdk 26 · JVM 17</strong><br>
+        依赖：Compose BOM 2024.09.03 + Material 3 + activity-compose + lifecycle-runtime-ktx<br>
+        <strong>AndroidManifest：</strong>INTERNET 权限 + <code>usesCleartextTraffic=true</code>（允许 HTTP 明文，开发阶段必须）。
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ===== 3. End-to-End Flow ===== -->
+<div class="section s3">
+  <div class="section-title"><span class="icon">⚡</span> 端到端数据流：从用户输入到商品卡片</div>
+  <div class="card">
+    <div class="pipeline">
+      <div class="pipe-step">
+        <div class="step-num">1</div>
+        <div class="step-title">用户输入</div>
+        <div class="step-file">InputBar → onSend</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">2</div>
+        <div class="step-title">添加消息</div>
+        <div class="step-file">ChatScreen</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">3</div>
+        <div class="step-title">发起 SSE</div>
+        <div class="step-file">ChatApi.streamChat</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">4</div>
+        <div class="step-title">HTTP POST</div>
+        <div class="step-file">/api/chat</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">5</div>
+        <div class="step-title">后端 RAG</div>
+        <div class="step-file">检索→LLM→SSE</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">6</div>
+        <div class="step-title">逐行解析</div>
+        <div class="step-file">event/data 行对</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">7</div>
+        <div class="step-title">token 回调</div>
+        <div class="step-file">text 增量拼接</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">8</div>
+        <div class="step-title">products 回调</div>
+        <div class="step-file">商品卡片渲染</div>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num">9</div>
+        <div class="step-title">done 回调</div>
+        <div class="step-file">isStreaming=false</div>
+      </div>
+    </div>
+
+    <div class="highlight-box" style="margin-top: 20px;">
+      <div class="hl-title">关键交互细节</div>
+      <ul>
+        <li><strong>并发控制：</strong>发送按钮在 <code>isStreaming=true</code> 时 disabled，防止用户在流式响应期间发起第二个请求</li>
+        <li><strong>占位策略：</strong>发送用户消息后立即 add 一条 text="" 的 Assistant 消息，token 回调通过 <code>copy(text = old.text + token)</code> 逐步填充</li>
+        <li><strong>线程模型：</strong>ChatApi.streamChat 运行在 <code>Dispatchers.IO</code>，UI 回调通过 <code>scope.launch</code> 切回主线程更新 Compose state</li>
+        <li><strong>错误兜底：</strong>HTTP 非 2xx → onError；网络异常 → onError；后端 SSE error 事件 → onError。三种路径都会在 Assistant 气泡中显示错误文本并恢复 isStreaming</li>
+        <li><strong>session 持久化：</strong>conversationId 用 <code>remember { UUID }</code> 持有，Activity 重建时不变，服务重启后后端 session 清空但客户端无感知</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 4. Client-Server Connection ===== -->
+<div class="section s2">
+  <div class="section-title"><span class="icon">🔗</span> 客户端 ↔ 后端 连接协议</div>
+  <div class="arch-svg-wrap">
+    <svg viewBox="0 0 1100 520" style="width:100%; max-width:1100px; display:block; margin:0 auto;">
+      <defs>
+        <marker id="arrG" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#5cb88d"/></marker>
+        <marker id="arrB" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#2F6FED"/></marker>
+        <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.12"/></filter>
+      </defs>
+
+      <!-- Client side -->
+      <rect x="20" y="20" width="480" height="480" rx="16" fill="#1a1d27" stroke="#2F6FED" stroke-width="1.5" filter="url(#sh)"/>
+      <rect x="20" y="20" width="480" height="32" rx="16" fill="#2F6FED"/>
+      <rect x="20" y="36" width="480" height="16" fill="#2F6FED"/>
+      <text x="260" y="42" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">Android 客户端 (Kotlin + Compose)</text>
+
+      <!-- Client components -->
+      <rect x="50" y="70" width="420" height="52" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="260" y="92" text-anchor="middle" fill="#e8a454" font-size="10" font-weight="600">ChatApi.streamChat()</text>
+      <text x="260" y="110" text-anchor="middle" fill="#959bb5" font-size="8.5">请求构造 → SSE 解析 → 4 种事件回调分发</text>
+
+      <!-- Request arrow -->
+      <line x1="260" y1="122" x2="260" y2="170" stroke="#5cb88d" stroke-width="2" marker-end="url(#arrG)"/>
+      <text x="275" y="150" fill="#5cb88d" font-size="8.5" font-weight="600">POST /api/chat</text>
+
+      <rect x="50" y="175" width="420" height="105" rx="8" fill="#0f1117" stroke="#2e3148" stroke-width="1"/>
+      <text x="70" y="198" fill="#959bb5" font-size="8.5" font-family="monospace">{</text>
+      <text x="80" y="216" fill="#5cb88d" font-size="8.5" font-family="monospace">"message":</text><text x="145" y="216" fill="#e1e4ed" font-size="8.5" font-family="monospace">"200元以下的蓝牙耳机有哪些？"</text>
+      <text x="80" y="234" fill="#5cb88d" font-size="8.5" font-family="monospace">"conversationId":</text><text x="185" y="234" fill="#e1e4ed" font-size="8.5" font-family="monospace">"a1b2c3d4-..."</text>
+      <text x="70" y="252" fill="#959bb5" font-size="8.5" font-family="monospace">}</text>
+      <text x="80" y="270" fill="#5c6370" font-size="8" font-family="monospace">Content-Type: application/json; charset=utf-8</text>
+      <text x="80" y="284" fill="#5c6370" font-size="8" font-family="monospace">Accept: text/event-stream</text>
+
+      <!-- SSE Response arrow -->
+      <line x1="630" y1="150" x2="630" y2="175" stroke="#2F6FED" stroke-width="1.5" marker-end="url(#arrB)"/>
+
+      <!-- SSE events -->
+      <rect x="50" y="295" width="420" height="185" rx="8" fill="#0f1117" stroke="#2e3148" stroke-width="1"/>
+      <text x="70" y="318" fill="#5c6370" font-size="8" font-family="monospace">Content-Type: text/event-stream</text>
+
+      <rect x="70" y="330" width="380" height="28" rx="4" fill="#1a2a1f"/>
+      <text x="85" y="349" fill="#5cb88d" font-size="8.5" font-family="monospace">event: token</text>
+      <text x="200" y="349" fill="#959bb5" font-size="8.5" font-family="monospace">data: {"content":"根"}</text>
+
+      <rect x="70" y="364" width="380" height="28" rx="4" fill="#1a2a1f"/>
+      <text x="85" y="383" fill="#5cb88d" font-size="8.5" font-family="monospace">event: token</text>
+      <text x="200" y="383" fill="#959bb5" font-size="8.5" font-family="monospace">data: {"content":"据"}</text>
+
+      <rect x="70" y="398" width="380" height="28" rx="4" fill="#1f241a"/>
+      <text x="85" y="417" fill="#e8a454" font-size="8.5" font-family="monospace">event: products</text>
+      <text x="200" y="417" fill="#959bb5" font-size="8.5" font-family="monospace">data: {"products":[{"title":"...","price":199,...}]}</text>
+
+      <rect x="70" y="432" width="380" height="28" rx="4" fill="#1a2127"/>
+      <text x="85" y="451" fill="#4ecdc4" font-size="8.5" font-family="monospace">event: done</text>
+      <text x="200" y="451" fill="#959bb5" font-size="8.5" font-family="monospace">data: {"ok":true,"conversationId":"a1b2c3d4-..."}</text>
+
+      <!-- Server side -->
+      <rect x="600" y="20" width="470" height="480" rx="16" fill="#1a1d27" stroke="#4ecdc4" stroke-width="1.5" filter="url(#sh)"/>
+      <rect x="600" y="20" width="470" height="32" rx="16" fill="#4ecdc4"/>
+      <rect x="600" y="36" width="470" height="16" fill="#4ecdc4"/>
+      <text x="835" y="42" text-anchor="middle" fill="#0f1117" font-size="12" font-weight="700">Node.js 后端 (localhost:3001)</text>
+
+      <!-- Server components -->
+      <rect x="630" y="70" width="410" height="40" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="835" y="95" text-anchor="middle" fill="#e8a454" font-size="10" font-weight="600">http.js → handleChat()</text>
+
+      <rect x="630" y="120" width="195" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="727" y="143" text-anchor="middle" fill="#b392f0" font-size="9.5">memory.js — 会话更新</text>
+
+      <rect x="845" y="120" width="195" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="942" y="143" text-anchor="middle" fill="#5cb88d" font-size="9.5">retriever.js — 商品检索</text>
+
+      <rect x="630" y="166" width="195" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="727" y="189" text-anchor="middle" fill="#5cb88d" font-size="9.5">向量排序 (local/Qdrant)</text>
+
+      <rect x="845" y="166" width="195" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="942" y="189" text-anchor="middle" fill="#b392f0" font-size="9.5">llm.js — LLM 流式生成</text>
+
+      <rect x="630" y="212" width="410" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="835" y="235" text-anchor="middle" fill="#959bb5" font-size="9.5">writeSse(res, "token", ...each delta...)</text>
+
+      <rect x="630" y="258" width="410" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="835" y="281" text-anchor="middle" fill="#959bb5" font-size="9.5">buildProductCards(matchedProducts) → writeSse(res, "products", ...)</text>
+
+      <rect x="630" y="304" width="410" height="36" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="835" y="327" text-anchor="middle" fill="#959bb5" font-size="9.5">writeSse(res, "done", { ok: true, conversationId })</text>
+
+      <!-- Error path -->
+      <rect x="630" y="355" width="410" height="36" rx="8" fill="#2a1a1d" stroke="#e0556a" stroke-width="1" stroke-dasharray="3,2"/>
+      <text x="835" y="378" text-anchor="middle" fill="#e0556a" font-size="9.5">catch → writeSse(res, "error", { code, message, details })</text>
+      <line x1="727" y1="340" x2="727" y2="355" stroke="#e0556a" stroke-width="0.8" stroke-dasharray="3,2" marker-end="url(#arrG)"/>
+
+      <!-- Finally -->
+      <rect x="630" y="406" width="410" height="30" rx="8" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="835" y="426" text-anchor="middle" fill="#959bb5" font-size="9">finally { res.end() } — 连接关闭</text>
+
+      <!-- Network layer -->
+      <line x1="260" y1="480" x2="260" y2="510" stroke="#959bb5" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="835" y1="480" x2="835" y2="510" stroke="#959bb5" stroke-width="1" stroke-dasharray="3,3"/>
+      <rect x="420" y="500" width="260" height="20" rx="10" fill="#242736" stroke="#2e3148" stroke-width="1"/>
+      <text x="550" y="514" text-anchor="middle" fill="#959bb5" font-size="8">🔗 10.0.2.2:3001 (模拟器 → 宿主机)</text>
+    </svg>
+  </div>
+</div>
+
+<!-- ===== 5. SSE Event Handling ===== -->
+<div class="section s3">
+  <div class="section-title"><span class="icon">📡</span> SSE 事件解析 & 状态更新机制</div>
+  <div class="card">
+    <div class="module-grid">
+      <div>
+        <div class="card-title">ChatApi 事件分发逻辑</div>
+        <div class="code-block">
+<span class="cmt">// BufferedReader 逐行读取 text/event-stream</span>
+<span class="kw">while</span> (<span class="kw">true</span>) {
+    <span class="kw">val</span> line = reader.readLine() ?: <span class="kw">break</span>
+
+    <span class="kw">when</span> {
+        line.startsWith(<span class="str">"event:"</span>) → eventName = ...
+        line.startsWith(<span class="str">"data:"</span>) → <span class="fn">handleEvent</span>(eventName, data, ...)
+    }
+}
+
+<span class="cmt">// handleEvent 分发</span>
+<span class="str">"token"</span>    → JSONObject(data).optString(<span class="str">"content"</span>) → onToken
+<span class="str">"products"</span> → JSONObject(data).optJSONArray(<span class="str">"products"</span>)
+             → map to List&lt;ProductCard&gt; → onProducts
+<span class="str">"done"</span>     → onDone()
+<span class="str">"error"</span>    → error.message + details → onError
+        </div>
+      </div>
+      <div>
+        <div class="card-title">ChatScreen 状态更新</div>
+        <div class="code-block">
+<span class="cmt">// token: 增量拼接文本</span>
+onToken = { token →
+    <span class="fn">updateAssistantMessage</span>(messages, id) { old →
+        old.<span class="fn">copy</span>(text = old.text + token)
+    }
+}
+
+<span class="cmt">// products: 整组替换</span>
+onProducts = { products →
+    <span class="fn">updateAssistantMessage</span>(messages, id) { old →
+        old.<span class="fn">copy</span>(products = products)
+    }
+}
+
+<span class="cmt">// done: 恢复输入</span>
+onDone = { isStreaming = <span class="kw">false</span> }
+
+<span class="cmt">// error: 显示错误文本 + 恢复输入</span>
+onError = { msg →
+    <span class="fn">updateAssistantMessage</span>(...) {
+        old.<span class="fn">copy</span>(text = <span class="str">"请求失败：$msg"</span>)
+    }
+    isStreaming = <span class="kw">false</span>
+}
+        </div>
+      </div>
+    </div>
+
+    <div class="highlight-box">
+      <div class="hl-title">updateAssistantMessage 辅助函数</div>
+      <ul>
+        <li>通过 <code>messages.indexOfFirst { it.id == messageId }</code> 定位消息</li>
+        <li>用 <code>messages[index] = transform(old)</code> 触发 Compose 重组</li>
+        <li>ChatMessage 是 data class，copy() 创建新实例 = Compose 能正确 diff 并只重组变化的气泡</li>
+        <li>LazyColumn 使用 <code>key = { it.id }</code> 稳定列表项标识，避免流式更新时列表闪烁</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 6. UI Layout ===== -->
+<div class="section">
+  <div class="section-title"><span class="icon">📱</span> UI 布局 & 组件树</div>
+  <div class="card">
+    <div class="arch-svg-wrap">
+      <svg viewBox="0 0 1080 420" style="width:100%; max-width:1080px; display:block; margin:0 auto;">
+        <defs>
+          <filter id="s"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.1"/></filter>
+        </defs>
+
+        <!-- Phone frame -->
+        <rect x="60" y="20" width="340" height="380" rx="24" fill="#1a1d27" stroke="#2e3148" stroke-width="2"/>
+        <rect x="80" y="50" width="300" height="330" rx="12" fill="#f6f7f9" />
+
+        <!-- Header bar -->
+        <rect x="80" y="50" width="300" height="52" rx="12" fill="#ffffff"/>
+        <rect x="80" y="90" width="300" height="12" fill="#ffffff"/>
+        <text x="120" y="72" fill="#1F2328" font-size="9" font-weight="600">ShopGuide Agent</text>
+        <text x="120" y="86" fill="#5F6673" font-size="7.5">RAG 电商智能导购</text>
+        <circle cx="350" cy="74" r="4" fill="#168A45"/>
+        <text x="358" y="78" fill="#168A45" font-size="7">后端已连接</text>
+
+        <!-- Chat area -->
+        <rect x="95" y="110" width="270" height="20" rx="6" fill="#2F6FED"/>
+        <text x="200" y="124" fill="#ffffff" font-size="7.5" text-anchor="middle">你好，推荐一款洗面奶</text>
+
+        <rect x="95" y="138" width="270" height="70" rx="6" fill="#ffffff"/>
+        <text x="110" y="156" fill="#1F2328" font-size="7.5">根据你的需求，为你推荐以下商品：</text>
+
+        <!-- Mini product cards -->
+        <rect x="110" y="164" width="240" height="35" rx="4" fill="#f6f7f9" stroke="#e1e4ed" stroke-width="0.5"/>
+        <text x="120" y="178" fill="#1F2328" font-size="7" font-weight="600">氨基酸洁面乳</text>
+        <text x="120" y="192" fill="#2F6FED" font-size="6.5">品牌A · CNY 89</text>
+
+        <!-- Input bar -->
+        <rect x="80" y="340" width="300" height="40" rx="0" fill="#ffffff"/>
+        <rect x="92" y="346" width="230" height="28" rx="6" fill="#f6f7f9" stroke="#d1d5db" stroke-width="0.5"/>
+        <text x="100" y="364" fill="#9ca3af" font-size="7.5">输入你的购物需求</text>
+        <rect x="330" y="346" width="40" height="28" rx="14" fill="#2F6FED"/>
+        <text x="350" y="364" fill="#fff" font-size="7.5" text-anchor="middle">发送</text>
+
+        <!-- Component tree arrows -->
+        <line x1="430" y1="76" x2="490" y2="76" stroke="#959bb5" stroke-width="1" marker-end="url(#arrG)"/>
+
+        <!-- Component tree -->
+        <text x="500" y="48" fill="#959bb5" font-size="10" font-weight="600">Compose 组件树</text>
+
+        <rect x="500" y="58" width="160" height="32" rx="8" fill="#1a1d27" stroke="#7F52FF" stroke-width="1.2" filter="url(#s)"/>
+        <text x="580" y="79" text-anchor="middle" fill="#7F52FF" font-size="9.5" font-weight="600">MainActivity</text>
+        <line x1="580" y1="90" x2="580" y2="102" stroke="#959bb5" stroke-width="0.8"/>
+
+        <rect x="500" y="105" width="160" height="32" rx="8" fill="#1a1d27" stroke="#2F6FED" stroke-width="1" filter="url(#s)"/>
+        <text x="580" y="126" text-anchor="middle" fill="#2F6FED" font-size="9.5">ChatScreen</text>
+        <line x1="580" y1="137" x2="500" y2="155" stroke="#959bb5" stroke-width="0.6"/>
+        <line x1="580" y1="137" x2="580" y2="155" stroke="#959bb5" stroke-width="0.6"/>
+        <line x1="580" y1="137" x2="660" y2="155" stroke="#959bb5" stroke-width="0.6"/>
+
+        <rect x="420" y="158" width="150" height="30" rx="6" fill="#242736" stroke="#2e3148" stroke-width="0.8"/>
+        <text x="495" y="178" text-anchor="middle" fill="#e1e4ed" font-size="8.5">Header</text>
+
+        <rect x="500" y="158" width="150" height="30" rx="6" fill="#242736" stroke="#2e3148" stroke-width="0.8"/>
+        <text x="575" y="178" text-anchor="middle" fill="#e1e4ed" font-size="8.5">LazyColumn</text>
+
+        <rect x="585" y="158" width="150" height="30" rx="6" fill="#242736" stroke="#2e3148" stroke-width="0.8"/>
+        <text x="660" y="178" text-anchor="middle" fill="#e1e4ed" font-size="8.5">InputBar</text>
+
+        <line x1="575" y1="188" x2="485" y2="208" stroke="#959bb5" stroke-width="0.5"/>
+        <line x1="575" y1="188" x2="595" y2="208" stroke="#959bb5" stroke-width="0.5"/>
+
+        <rect x="410" y="210" width="140" height="30" rx="6" fill="#242736" stroke="#2e3148" stroke-width="0.8"/>
+        <text x="480" y="230" text-anchor="middle" fill="#959bb5" font-size="8">MessageBubble</text>
+
+        <rect x="560" y="210" width="140" height="30" rx="6" fill="#242736" stroke="#2e3148" stroke-width="0.8"/>
+        <text x="630" y="230" text-anchor="middle" fill="#959bb5" font-size="8">ProductCardView</text>
+
+        <!-- Layout hints -->
+        <rect x="760" y="58" width="280" height="190" rx="12" fill="#1a1d27" stroke="#2e3148" stroke-width="1" filter="url(#s)"/>
+        <text x="780" y="82" fill="#2F6FED" font-size="10" font-weight="600">布局结构</text>
+
+        <text x="780" y="106" fill="#959bb5" font-size="8.5">Column(fillMaxSize) {</text>
+        <text x="795" y="124" fill="#e1e4ed" font-size="8.5">Header(isBackendHealthy)</text>
+        <text x="795" y="144" fill="#e1e4ed" font-size="8.5">LazyColumn(weight=1f) {</text>
+        <text x="810" y="162" fill="#959bb5" font-size="8">items(messages, key=id) {</text>
+        <text x="825" y="180" fill="#959bb5" font-size="8">MessageBubble(message)</text>
+        <text x="810" y="198" fill="#959bb5" font-size="8">}</text>
+        <text x="795" y="216" fill="#e1e4ed" font-size="8.5">}</text>
+        <text x="795" y="236" fill="#e1e4ed" font-size="8.5">InputBar(enabled=!isStreaming)</text>
+        <text x="780" y="254" fill="#959bb5" font-size="8.5">}</text>
+
+        <!-- State -->
+        <rect x="760" y="268" width="280" height="130" rx="12" fill="#1a1d27" stroke="#5cb88d" stroke-width="1" filter="url(#s)"/>
+        <text x="780" y="292" fill="#5cb88d" font-size="10" font-weight="600">状态变量 (ChatScreen)</text>
+        <line x1="775" y1="302" x2="1025" y2="302" stroke="#2e3148" stroke-width="0.5"/>
+
+        <text x="780" y="320" fill="#e1e4ed" font-size="8.5">input: String</text>
+        <text x="940" y="320" fill="#959bb5" font-size="7.5">输入框文本</text>
+
+        <text x="780" y="340" fill="#e1e4ed" font-size="8.5">isStreaming: Boolean</text>
+        <text x="940" y="340" fill="#959bb5" font-size="7.5">禁用输入/按钮</text>
+
+        <text x="780" y="360" fill="#e1e4ed" font-size="8.5">isBackendHealthy: Boolean?</text>
+        <text x="940" y="360" fill="#959bb5" font-size="7.5">连接状态指示</text>
+
+        <text x="780" y="380" fill="#e1e4ed" font-size="8.5">conversationId: String</text>
+        <text x="940" y="380" fill="#959bb5" font-size="7.5">会话标识 (UUID)</text>
+
+        <text x="780" y="400" fill="#e1e4ed" font-size="8.5">messages: SnapshotStateList</text>
+        <text x="940" y="400" fill="#959bb5" font-size="7.5">LazyColumn 数据源</text>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 7. Design Decisions ===== -->
+<div class="section s4">
+  <div class="section-title"><span class="icon">💡</span> 关键设计决策</div>
+  <div class="card">
+    <div class="module-grid" style="grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));">
+      <div class="highlight-box">
+        <div class="hl-title">零第三方网络库</div>
+        <ul>
+          <li>使用系统 <code>HttpURLConnection</code> 而非 OkHttp/Retrofit</li>
+          <li>MVP 阶段减少依赖引入，降低构建复杂度和 APK 体积</li>
+          <li>SSE 协议本身简单（逐行读取），标准库完全够用</li>
+          <li>代价：手动管理连接生命周期，没有拦截器/重试等高级功能</li>
+        </ul>
+      </div>
+      <div class="highlight-box">
+        <div class="hl-title">单 Activity + Compose</div>
+        <ul>
+          <li>不使用 Fragment 或 Navigation 组件，极简架构</li>
+          <li>所有状态在 ChatScreen 内部用 <code>remember</code> / <code>mutableStateListOf</code> 管理</li>
+          <li>现阶段仅一个对话页面，无需路由。后续扩展时再引入 ViewModel + Navigation</li>
+        </ul>
+      </div>
+      <div class="highlight-box">
+        <div class="hl-title">流式更新的占位-填充模式</div>
+        <ul>
+          <li>发送用户消息后立即创建空 Assistant 消息占位</li>
+          <li>token 回调逐个追加到 <code>text</code> 字段</li>
+          <li>products 回调整组替换 <code>products</code> 字段</li>
+          <li>LazyColumn + <code>key = id</code> 保证占位消息不会因重组而闪烁</li>
+        </ul>
+      </div>
+      <div class="highlight-box">
+        <div class="hl-title">模拟器地址硬编码</div>
+        <ul>
+          <li><code>10.0.2.2</code> 是 Android 模拟器访问宿主机 localhost 的专用地址</li>
+          <li>硬编码在 ApiConfig 中，后续可改为 BuildConfig 或 SharedPreferences 动态配置</li>
+          <li>真机调试时需要改为电脑的局域网 IP</li>
+        </ul>
+      </div>
+      <div class="highlight-box">
+        <div class="hl-title">Cleartext 明文 HTTP</div>
+        <ul>
+          <li><code>AndroidManifest.xml</code> 中 <code>usesCleartextTraffic="true"</code></li>
+          <li>开发阶段后端是 HTTP，不加此配置 Android 9+ 会阻止明文请求</li>
+          <li>生产发布前需切换为 HTTPS 并移除此配置</li>
+        </ul>
+      </div>
+      <div class="highlight-box">
+        <div class="hl-title">商品卡片与文本分离渲染</div>
+        <ul>
+          <li>商品卡片通过独立 SSE <code>products</code> 事件下发，不混在模型生成的文本中</li>
+          <li>客户端 <code>MessageBubble</code> 将文本和商品列表分开渲染</li>
+          <li>避免了从自然语言文本中解析商品信息的不可靠方案</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 8. Backend ↔ Client Contract ===== -->
+<div class="section s2">
+  <div class="section-title"><span class="icon">📋</span> 前后端接口契约</div>
+  <div class="card" style="overflow-x:auto;">
+    <table style="width:100%; border-collapse:collapse; font-size:0.88rem;">
+      <thead>
+        <tr>
+          <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;font-size:0.8rem;text-transform:uppercase;">接口</th>
+          <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;font-size:0.8rem;text-transform:uppercase;">客户端调用位置</th>
+          <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;font-size:0.8rem;text-transform:uppercase;">用途</th>
+          <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;font-size:0.8rem;text-transform:uppercase;">请求方式</th>
+          <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--border);color:var(--text2);font-weight:600;font-size:0.8rem;text-transform:uppercase;">响应类型</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);" class="api-path">GET /api/health</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">HealthApi.checkHealth()</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">启动时检测后端连通性</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">同步 GET</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">JSON</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);" class="api-path">POST /api/chat</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">ChatApi.streamChat()</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">核心对话交互</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">IO 协程 + SSE 流读</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">text/event-stream</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);" class="api-path">POST /api/conversations/reset</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">（未接入）</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">新建对话/清空上下文</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">—</td>
+          <td style="padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text2);">JSON</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="highlight-box">
+      <div class="hl-title">已接入 vs 待接入</div>
+      <ul>
+        <li><strong>已接入：</strong>GET /api/health（启动健康检查）、POST /api/chat（SSE 流式对话 + 商品卡片）</li>
+        <li><strong>待接入：</strong>POST /api/conversations/reset（重置会话，客户端重新生成 conversationId 即可等效实现）、GET /api/products（商品列表页，非对话场景使用）</li>
+        <li><strong>后端保留但客户端暂不需要：</strong>POST /api/debug/retrieve（开发调试用）</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+</body>
+</html>

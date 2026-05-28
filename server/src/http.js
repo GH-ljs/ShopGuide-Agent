@@ -1,13 +1,20 @@
 // 文件职责：
 // 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
-
 import { buildLocalAnswer, buildProductCards } from "./answer.js";
 import { buildError, ERROR_CODES } from "./errors.js";
 import { streamModelAnswer } from "./llm.js";
-import { appendTurn, buildRetrievalQuery, getRecentTurns, getSession, rememberProducts, resetSession, snapshotSession, updateSessionState } from "./memory.js";
+import {
+  appendTurn,
+  buildRetrievalQuery,
+  getRecentTurns,
+  getSession,
+  rememberProducts,
+  resetSession,
+  snapshotSession,
+  updateSessionState
+} from "./memory.js";
 import { retrieveProductsWithDebug, retrieveProductsWithState } from "./retriever.js";
 
-// 普通 JSON 响应工具，主要给 health/products/错误返回使用。
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -17,7 +24,6 @@ function sendJson(res, status, payload) {
   res.end(body);
 }
 
-// 原生 Node HTTP 不会自动解析 JSON body，这里手动读取请求体。
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -25,13 +31,11 @@ async function readJsonBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-// SSE 格式：每个事件包含 event 和 data 两行，并用空行结束。
 function writeSse(res, event, data) {
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
-// 本地兜底模式也模拟逐段输出，让客户端可以先按真实流式体验开发。
 async function streamText(res, text) {
   const parts = text.split(/(\s+|\n)/).filter(Boolean);
   for (const part of parts) {
@@ -40,13 +44,81 @@ async function streamText(res, text) {
   }
 }
 
-// 请求进来-->判断路径
+function writeSseHeaders(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*"
+  });
+}
+
+async function handleChat({ body, config, products, vectorIndex, res }) {
+  const message = String(body.message || "").trim();
+  if (!message) {
+    sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
+    return;
+  }
+
+  writeSseHeaders(res);
+
+  try {
+    const conversationId = String(body.conversationId || "default").trim() || "default";
+    const session = getSession(conversationId);
+    const state = updateSessionState(session, message);
+    const history = getRecentTurns(session);
+    const retrievalQuery = buildRetrievalQuery(session, message);
+
+    // 检索也属于 RAG 链路的一部分，必须被 try/catch 包住。
+    // 否则 Qdrant 或 embedding 服务异常时，客户端只会看到 connection reset。
+    const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
+    const cards = buildProductCards(matchedProducts);
+
+    let answerText = "";
+    if (config.llmApiKey) {
+      for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
+        answerText += token;
+        writeSse(res, "token", { content: token });
+      }
+    } else {
+      answerText = buildLocalAnswer(message, matchedProducts, history, state);
+      await streamText(res, answerText);
+    }
+
+    appendTurn(session, "user", message);
+    appendTurn(session, "assistant", answerText);
+    rememberProducts(session, matchedProducts);
+
+    writeSse(res, "products", { products: cards });
+    writeSse(res, "done", { ok: true, conversationId });
+  } catch (error) {
+    // 这里一定要打印真实错误，否则客户端只能看到统一错误文案，无法判断是检索还是模型失败。
+    console.error("[/api/chat] failed:", error);
+    writeSse(
+      res,
+      "error",
+      buildError(ERROR_CODES.MODEL_ERROR, "模型服务或检索服务暂时不可用", error.message)
+    );
+  } finally {
+    res.end();
+  }
+}
+
 export function createHandler({ config, products, vectorIndex }) {
   return async function handler(req, res) {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    if (req.method === "OPTIONS") {
+      res.writeHead(204, {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      });
+      res.end();
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/health") {
-      // 健康检查也暴露是否已配置模型 Key，方便排查当前是不是本地兜底模式。
       return sendJson(res, 200, {
         ok: true,
         productCount: products.length,
@@ -56,7 +128,6 @@ export function createHandler({ config, products, vectorIndex }) {
     }
 
     if (req.method === "GET" && url.pathname === "/api/products") {
-      // 给客户端调试用的轻量商品列表，不返回长详情和评价，避免响应过大。
       return sendJson(
         res,
         200,
@@ -80,7 +151,6 @@ export function createHandler({ config, products, vectorIndex }) {
       }
 
       const conversationId = String(body.conversationId || "default").trim() || "default";
-      // 重置会话只清空内存状态，不影响商品索引和 Qdrant 数据。
       const session = resetSession(conversationId);
       return sendJson(res, 200, {
         ok: true,
@@ -129,64 +199,7 @@ export function createHandler({ config, products, vectorIndex }) {
         return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
       }
 
-      const message = String(body.message || "").trim();
-      if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
-
-      const conversationId = String(body.conversationId || "default").trim() || "default";
-      const session = getSession(conversationId);
-      const state = updateSessionState(session, message);
-      const history = getRecentTurns(session);
-      const retrievalQuery = buildRetrievalQuery(session, message);
-
-      // 先检索商品，再把候选商品交给本地回答或大模型生成。
-      const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
-      const cards = buildProductCards(matchedProducts);
-
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*"
-      });
-
-      try {
-        let answerText = "";
-        if (config.llmApiKey) {
-          // 配置 Key 后走真实模型流式输出。
-          for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
-            answerText += token;
-            writeSse(res, "token", { content: token });
-          }
-        } else {
-          // 未配置 Key 时走本地兜底，保证后端和客户端联调不被模型依赖阻塞。
-          answerText = buildLocalAnswer(message, matchedProducts, history, state);
-          await streamText(res, answerText);
-        }
-
-        appendTurn(session, "user", message);
-        appendTurn(session, "assistant", answerText);
-        rememberProducts(session, matchedProducts);
-
-        // 文本流结束后，再单独发送商品卡片，客户端可据此渲染可点击卡片。
-        writeSse(res, "products", { products: cards });
-        writeSse(res, "done", { ok: true, conversationId });
-      } catch (error) {
-        writeSse(res, "error", buildError(ERROR_CODES.MODEL_ERROR, "模型服务暂时不可用", error.message));
-      } finally {
-        res.end();
-      }
-
-      return;
-    }
-
-    if (req.method === "OPTIONS") {
-      // 预留 CORS 预检响应，后续 Android/Web 调试都更省事。
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      });
-      res.end();
+      await handleChat({ body, config, products, vectorIndex, res });
       return;
     }
 

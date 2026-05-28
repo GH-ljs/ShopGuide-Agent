@@ -26,15 +26,15 @@ fun Header(isBackendHealthy: Boolean?) {
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "RAG shopping assistant",
+            text = "RAG 电商智能导购",
             style = MaterialTheme.typography.bodyMedium,
             color = Color(0xFF5F6673)
         )
         Text(
             text = when (isBackendHealthy) {
-                true -> "Backend connected"
-                false -> "Backend disconnected"
-                null -> "Checking backend"
+                true -> "后端已连接"
+                false -> "后端未连接"
+                null -> "正在检查后端连接"
             },
             style = MaterialTheme.typography.bodySmall,
             color = when (isBackendHealthy) {
