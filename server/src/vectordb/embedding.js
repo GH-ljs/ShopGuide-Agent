@@ -1,7 +1,7 @@
 // 文件职责：
 // 把商品文本或用户问题转成固定长度向量，供 Qdrant 入库和查询使用。
 
-import { tokenizeForVector } from "./vectorStore.js";
+import { tokenizeForVector } from "../utils/nlp.js";
 
 export const DEFAULT_LOCAL_EMBEDDING_DIMENSION = 384;
 

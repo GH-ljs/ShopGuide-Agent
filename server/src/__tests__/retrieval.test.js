@@ -1,10 +1,10 @@
 // 文件职责：
 // 简单检索冒烟测试脚本，用来快速看检索结果是否合理。
 
-import { config } from "./config.js";
-import { loadProducts } from "./dataLoader.js";
-import { retrieveProducts } from "./retriever.js";
-import { createSearchIndex } from "./vectorIndexFactory.js";
+import { config } from "../config.js";
+import { loadProducts } from "../data/loader.js";
+import { retrieveProducts } from "../services/retriever.js";
+import { createSearchIndex } from "../vectordb/factory.js";
 
 // 这个文件不是单元测试框架，而是一个快速向量检索冒烟测试脚本。
 const products = loadProducts(config.datasetDir);

@@ -1,8 +1,8 @@
 // 文件职责：
 // 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
-import { buildLocalAnswer, buildProductCards } from "./answer.js";
-import { buildError, ERROR_CODES } from "./errors.js";
-import { streamModelAnswer } from "./llm.js";
+import { buildLocalAnswer, buildProductCards } from "./services/answer.js";
+import { buildError, ERROR_CODES } from "./utils/errors.js";
+import { streamModelAnswer } from "./services/llm.js";
 import {
   appendTurn,
   buildRetrievalQuery,
@@ -12,8 +12,8 @@ import {
   resetSession,
   snapshotSession,
   updateSessionState
-} from "./memory.js";
-import { retrieveProductsWithDebug, retrieveProductsWithState } from "./retriever.js";
+} from "./services/memory.js";
+import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services/retriever.js";
 
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);

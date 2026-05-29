@@ -1,8 +1,8 @@
 // 文件职责：
 // 快速验证当前 embedding 配置是否能生成指定维度的向量。
 
-import { config } from "./config.js";
-import { embedText } from "./embedding.js";
+import { config } from "../config.js";
+import { embedText } from "../vectordb/embedding.js";
 
 const vector = await embedText(config, "推荐一款适合油皮的防晒霜");
 

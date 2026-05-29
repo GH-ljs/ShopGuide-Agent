@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp d:/code/agent/ShopGuide-Agent/server/src/vectorStore.js d:/code/agent/ShopGuide-Agent/server/src/vectordb/local.js)"
+    ],
+    "additionalDirectories": [
+      "d:\\code\\agent\\ShopGuide-Agent\\server\\src"
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 // 文件职责：
 // 检查本地 Qdrant 服务是否可访问，方便确认 Docker 容器是否启动成功。
 
-import { config } from "./config.js";
+import { config } from "../config.js";
 
 async function run() {
   const url = `${config.qdrantUrl.replace(/\/$/, "")}/collections`;

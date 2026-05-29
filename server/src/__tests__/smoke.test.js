@@ -2,10 +2,10 @@
 // 端到端冒烟测试：启动服务并验证核心 API 和 SSE 事件是否可用。
 
 import http from "node:http";
-import { config } from "./config.js";
-import { loadProducts } from "./dataLoader.js";
-import { createHandler } from "./http.js";
-import { createSearchIndex } from "./vectorIndexFactory.js";
+import { config } from "../config.js";
+import { loadProducts } from "../data/loader.js";
+import { createHandler } from "../http.js";
+import { createSearchIndex } from "../vectordb/factory.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

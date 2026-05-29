@@ -1,9 +1,9 @@
 // 文件职责：
 // 把本地商品数据生成向量并写入 Qdrant collection。
 
-import { config } from "./config.js";
-import { loadProducts } from "./dataLoader.js";
-import { upsertProductsToQdrant } from "./qdrantStore.js";
+import { config } from "../config.js";
+import { loadProducts } from "../data/loader.js";
+import { upsertProductsToQdrant } from "../vectordb/qdrant.js";
 
 async function main() {
   const products = loadProducts(config.datasetDir);

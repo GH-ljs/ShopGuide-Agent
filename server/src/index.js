@@ -3,9 +3,9 @@
 
 import http from "node:http";
 import { config } from "./config.js";
-import { loadProducts } from "./dataLoader.js";
+import { loadProducts } from "./data/loader.js";
 import { createHandler } from "./http.js";
-import { createSearchIndex } from "./vectorIndexFactory.js";
+import { createSearchIndex } from "./vectordb/factory.js";
 
 // 服务启动时一次性加载商品库。当前数据量小，内存加载最简单也最稳定。
 const products = loadProducts(config.datasetDir);

@@ -52,22 +52,29 @@ ShopGuide-Agent/
 │  │  ├─ index.js                       # 服务入口，监听 3001
 │  │  ├─ config.js                      # .env 配置读取
 │  │  ├─ http.js                        # HTTP 路由 + SSE 输出 + CORS
-│  │  ├─ dataLoader.js                  # 加载标准化商品 JSON
-│  │  ├─ retriever.js                   # 检索入口：类目识别、预算过滤、否定词过滤
-│  │  ├─ vectorStore.js                 # 本地文本向量索引 + 余弦相似度
-│  │  ├─ vectorIndexFactory.js          # 向量检索器工厂（local / qdrant）
-│  │  ├─ qdrantStore.js                 # Qdrant collection 管理 + 向量检索
-│  │  ├─ embedding.js                   # Embedding 入口（本地哈希 / Ark API）
-│  │  ├─ answer.js                      # 商品卡片构建 + 本地兜底回答 + LLM Prompt
-│  │  ├─ llm.js                         # OpenAI-compatible 流式模型调用
-│  │  ├─ memory.js                      # 内存多轮会话记忆 + 导购结构化状态
-│  │  ├─ errors.js                      # 统一错误码和错误响应
-│  │  ├─ qdrant.ingest.js               # 商品向量写入 Qdrant
-│  │  ├─ qdrant.search.test.js          # Qdrant 检索验证
-│  │  ├─ qdrant.health.js               # Qdrant 健康检查脚本
-│  │  ├─ retrieval.test.js              # 检索逻辑单元测试
-│  │  ├─ embedding.test.js              # Embedding 单元测试
-│  │  └─ smoke.test.js                  # 端到端冒烟测试
+│  │  ├─ services/                      # 业务逻辑
+│  │  │  ├─ answer.js                   #   商品卡片构建 + 本地兜底回答 + LLM Prompt
+│  │  │  ├─ llm.js                      #   OpenAI-compatible 流式模型调用
+│  │  │  ├─ memory.js                   #   内存多轮会话记忆 + 导购结构化状态
+│  │  │  └─ retriever.js                #   检索入口：类目识别、预算过滤、否定词过滤
+│  │  ├─ vectordb/                      # 向量数据库层
+│  │  │  ├─ local.js                    #   本地文本向量索引 + 余弦相似度
+│  │  │  ├─ embedding.js                #   Embedding 入口（本地哈希 / Ark API）
+│  │  │  ├─ qdrant.js                   #   Qdrant collection 管理 + 向量检索
+│  │  │  └─ factory.js                  #   向量检索器工厂（local / qdrant）
+│  │  ├─ data/
+│  │  │  └─ loader.js                   # 加载标准化商品 JSON
+│  │  ├─ utils/
+│  │  │  ├─ errors.js                   # 统一错误码和错误响应
+│  │  │  └─ nlp.js                      # 共享分词、类目识别、价格/否定词解析
+│  │  ├─ scripts/                       # CLI 工具脚本
+│  │  │  ├─ qdrant-ingest.js            #   商品向量写入 Qdrant
+│  │  │  ├─ qdrant-health.js            #   Qdrant 健康检查
+│  │  │  └─ qdrant-search-test.js       #   Qdrant 检索验证
+│  │  └─ __tests__/                     # 测试
+│  │     ├─ retrieval.test.js           #   检索逻辑测试
+│  │     ├─ embedding.test.js           #   Embedding 测试
+│  │     └─ smoke.test.js               #   端到端冒烟测试
 │  ├─ .env                              # 本地环境配置（不提交）
 │  └─ README.md                         # 后端详细说明
 │
@@ -130,7 +137,7 @@ docker compose up -d
 
 # 2. 写入商品向量
 cd server
-node src/qdrant.ingest.js
+node src/scripts/qdrant-ingest.js
 ```
 
 ### Embedding 配置
@@ -202,7 +209,7 @@ event: done      → 本轮完成
 
 ```bash
 cd server
-node src/retrieval.test.js    # 检索逻辑测试
-node src/embedding.test.js    # Embedding 测试
-node src/smoke.test.js        # 端到端冒烟测试
+node src/__tests__/retrieval.test.js    # 检索逻辑测试
+node src/__tests__/embedding.test.js    # Embedding 测试
+node src/__tests__/smoke.test.js        # 端到端冒烟测试
 ```

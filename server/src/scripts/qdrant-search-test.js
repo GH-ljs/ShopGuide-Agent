@@ -1,10 +1,10 @@
 // 文件职责：
 // 验证 Qdrant collection 已入库，并能按用户问题召回商品。
 
-import { config } from "./config.js";
-import { loadProducts } from "./dataLoader.js";
-import { retrieveProducts } from "./retriever.js";
-import { createSearchIndex } from "./vectorIndexFactory.js";
+import { config } from "../config.js";
+import { loadProducts } from "../data/loader.js";
+import { retrieveProducts } from "../services/retriever.js";
+import { createSearchIndex } from "../vectordb/factory.js";
 
 const products = loadProducts(config.datasetDir);
 const qdrantConfig = { ...config, vectorStore: "qdrant" };
