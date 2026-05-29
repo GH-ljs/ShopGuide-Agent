@@ -1,5 +1,6 @@
 // 文件职责：
-// 用内存保存多轮会话上下文，支持"再便宜点""不要这个"等追问。
+// 多轮会话记忆层：按 conversationId 在内存中保存对话历史、结构化购物约束和上一轮商品。
+// 支持“再便宜点”“不要这个”等省略式追问，让后续检索能继承上下文。
 
 import {
   extractNegativeTerms,
@@ -15,6 +16,7 @@ const sessions = new Map();
 function createEmptySession(conversationId) {
   return {
     conversationId,
+    // state 保存“可复用的购物约束”，turns 保存原始对话；两者分开后，检索不必反复猜历史意图。
     state: {
       category: "",
       itemIntent: null,
@@ -71,6 +73,7 @@ export function updateSessionState(session, message) {
   const excludeTerms = extractNegativeTerms(message);
   const preferences = extractPreferences(message);
 
+  // 只在本轮明确提到时覆盖核心约束，未提到的条件继续沿用，形成多轮导购记忆。
   if (category) session.state.category = category;
   if (itemIntent) session.state.itemIntent = itemIntent;
   if (Number.isFinite(price.maxPrice)) session.state.maxPrice = price.maxPrice;
@@ -101,7 +104,7 @@ export function buildRetrievalQuery(session, message) {
     session.state.minPrice ? `${session.state.minPrice}元以上` : ""
   ];
 
-  // 检索 query 合并最近需求和上一轮商品摘要，让省略式追问能继承上下文。
+  // 检索 query 合并最近需求、结构化状态和上一轮商品摘要，让省略式追问能继承上下文。
   return [...recentUserMessages, ...stateText, ...previousProducts, message].filter(Boolean).join(" ");
 }
 

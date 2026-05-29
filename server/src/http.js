@@ -1,7 +1,9 @@
 // 文件职责：
-// 定义后端 API，包含健康检查、商品列表、商品详情、商品图片、导购对话和检索调试。
+// 定义 Express 应用和后端 HTTP API：健康检查、商品列表/详情/图片、导购对话、会话重置和检索调试。
+// /api/chat 在这里串联 memory -> retriever -> answer/llm，并把 token、products、done/error 流式返回客户端。
 import fs from "node:fs";
 import path from "node:path";
+import express from "express";
 import { buildLocalAnswer, buildProductCards, buildProductDetail } from "./services/answer.js";
 import { buildError, ERROR_CODES } from "./utils/errors.js";
 import { streamModelAnswer } from "./services/llm.js";
@@ -18,28 +20,17 @@ import {
 import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services/retriever.js";
 
 function sendJson(res, status, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-    "Access-Control-Allow-Origin": "*"
-  });
-  res.end(body);
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  if (chunks.length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  res.status(status).json(payload);
 }
 
 function writeSse(res, event, data) {
+  // SSE 的基本格式是 event/data 两行加一个空行；客户端按事件名区分 token、products、done。
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 async function streamText(res, text) {
+  // 没有真实模型 Key 时，用本地答案模拟逐 token 输出，让客户端仍能验证流式渲染闭环。
   const parts = text.split(/(\s+|\n)/).filter(Boolean);
   for (const part of parts) {
     writeSse(res, "token", { content: part });
@@ -48,12 +39,14 @@ async function streamText(res, text) {
 }
 
 function writeSseHeaders(res) {
-  res.writeHead(200, {
+  // text/event-stream 告诉客户端这是长连接流式响应，而不是一次性 JSON。
+  res.status(200);
+  res.set({
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*"
+    Connection: "keep-alive"
   });
+  res.flushHeaders?.();
 }
 
 function contentTypeForImage(filePath) {
@@ -73,10 +66,10 @@ function sendImageFile(res, filePath) {
     return;
   }
 
-  res.writeHead(200, {
+  res.status(200);
+  res.set({
     "Content-Type": contentTypeForImage(filePath),
-    "Cache-Control": "public, max-age=3600",
-    "Access-Control-Allow-Origin": "*"
+    "Cache-Control": "public, max-age=3600"
   });
   fs.createReadStream(filePath).pipe(res);
 }
@@ -93,29 +86,35 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
   try {
     const conversationId = String(body.conversationId || "default").trim() || "default";
     const session = getSession(conversationId);
+    // 会话状态先吸收本轮用户输入，后面的检索和 Prompt 都会使用这些结构化约束。
     const state = updateSessionState(session, message);
     const history = getRecentTurns(session);
+    // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message);
 
-    // 检索属于 RAG 链路的一部分，也必须被 try/catch 包住。
+    // RAG 第一步：从可信商品库检索候选商品；后续回答和卡片都只能基于这些候选生成。
     const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
     const cards = buildProductCards(matchedProducts);
 
     let answerText = "";
     if (config.llmApiKey) {
+      // 有模型 Key 时直接把模型增量 token 转发给客户端，用户能更早看到回复内容。
       for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
         answerText += token;
         writeSse(res, "token", { content: token });
       }
     } else {
+      // 本地兜底回答不调用外部模型，便于无 Key 环境演示和测试端到端链路。
       answerText = buildLocalAnswer(message, matchedProducts, history, state);
       await streamText(res, answerText);
     }
 
+    // 只有成功生成答案后才写入会话，避免失败请求污染后续多轮上下文。
     appendTurn(session, "user", message);
     appendTurn(session, "assistant", answerText);
     rememberProducts(session, matchedProducts);
 
+    // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
     writeSse(res, "done", { ok: true, conversationId });
   } catch (error) {
@@ -130,81 +129,75 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
   }
 }
 
-export function createHandler({ config, products, vectorIndex }) {
-  return async function handler(req, res) {
-    const url = new URL(req.url, `http://${req.headers.host}`);
+function installCommonMiddleware(app) {
+  app.use((req, res, next) => {
+    // 统一 CORS 响应头，保持客户端和调试脚本跨源访问方式不变。
+    res.set({
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    });
 
     if (req.method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      });
-      res.end();
+      res.sendStatus(204);
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/api/health") {
-      return sendJson(res, 200, {
-        ok: true,
-        productCount: products.length,
-        modelEnabled: Boolean(config.llmApiKey),
-        llmProvider: config.llmProvider
-      });
-    }
+    next();
+  });
 
-    if (req.method === "GET" && url.pathname === "/api/products") {
-      return sendJson(res, 200, buildProductCards(products));
-    }
+  // Express 帮我们解析 JSON 请求体；解析失败会进入下面的错误处理中间件。
+  app.use(express.json({ limit: "1mb", type: "application/json" }));
+}
 
-    const imageMatch = url.pathname.match(/^\/api\/products\/([^/]+)\/image$/);
-    if (req.method === "GET" && imageMatch) {
-      const product = findProduct(products, decodeURIComponent(imageMatch[1]));
-      if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
-      return sendImageFile(res, product.imagePath);
-    }
+function installRoutes(app, { config, products, vectorIndex }) {
+  app.get("/api/health", (req, res) => {
+    sendJson(res, 200, {
+      ok: true,
+      productCount: products.length,
+      modelEnabled: Boolean(config.llmApiKey),
+      llmProvider: config.llmProvider
+    });
+  });
 
-    const detailMatch = url.pathname.match(/^\/api\/products\/([^/]+)$/);
-    if (req.method === "GET" && detailMatch) {
-      const product = findProduct(products, decodeURIComponent(detailMatch[1]));
-      if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
-      return sendJson(res, 200, buildProductDetail(product));
-    }
+  app.get("/api/products", (req, res) => {
+    sendJson(res, 200, buildProductCards(products));
+  });
 
-    if (req.method === "POST" && url.pathname === "/api/conversations/reset") {
-      let body;
-      try {
-        body = await readJsonBody(req);
-      } catch {
-        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
-      }
+  app.get("/api/products/:productId/image", (req, res) => {
+    const product = findProduct(products, req.params.productId);
+    if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
+    return sendImageFile(res, product.imagePath);
+  });
 
-      const conversationId = String(body.conversationId || "default").trim() || "default";
-      const session = resetSession(conversationId);
-      return sendJson(res, 200, {
-        ok: true,
-        conversationId,
-        session: snapshotSession(session)
-      });
-    }
+  app.get("/api/products/:productId", (req, res) => {
+    const product = findProduct(products, req.params.productId);
+    if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
+    return sendJson(res, 200, buildProductDetail(product));
+  });
 
-    if (req.method === "POST" && url.pathname === "/api/debug/retrieve") {
-      let body;
-      try {
-        body = await readJsonBody(req);
-      } catch {
-        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
-      }
+  app.post("/api/conversations/reset", (req, res) => {
+    const conversationId = String(req.body?.conversationId || "default").trim() || "default";
+    const session = resetSession(conversationId);
+    sendJson(res, 200, {
+      ok: true,
+      conversationId,
+      session: snapshotSession(session)
+    });
+  });
 
-      const message = String(body.message || "").trim();
+  app.post("/api/debug/retrieve", async (req, res, next) => {
+    try {
+      const message = String(req.body?.message || "").trim();
       if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
 
-      const conversationId = String(body.conversationId || "debug").trim() || "debug";
-      const includeMemory = body.includeMemory !== false;
+      const conversationId = String(req.body?.conversationId || "debug").trim() || "debug";
+      const includeMemory = req.body?.includeMemory !== false;
       const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
       const state = updateSessionState(session, message);
       const retrievalQuery = buildRetrievalQuery(session, message);
-      const debug = await retrieveProductsWithDebug(products, retrievalQuery, state, Number(body.limit || 4), vectorIndex);
+      // 调试接口返回解析结果、候选数量和向量分数，方便定位“为什么推荐了这些商品”。
+      const debug = await retrieveProductsWithDebug(products, retrievalQuery, state, Number(req.body?.limit || 4), vectorIndex);
 
       return sendJson(res, 200, {
         ok: true,
@@ -218,20 +211,44 @@ export function createHandler({ config, products, vectorIndex }) {
           products: buildProductCards(debug.products)
         }
       });
+    } catch (error) {
+      return next(error);
     }
+  });
 
-    if (req.method === "POST" && url.pathname === "/api/chat") {
-      let body;
-      try {
-        body = await readJsonBody(req);
-      } catch {
-        return sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
-      }
+  app.post("/api/chat", async (req, res) => {
+    await handleChat({ body: req.body || {}, config, products, vectorIndex, res });
+  });
+}
 
-      await handleChat({ body, config, products, vectorIndex, res });
+function installErrorHandlers(app) {
+  app.use((req, res) => {
+    sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "接口不存在"));
+  });
+
+  app.use((error, req, res, next) => {
+    if (res.headersSent) {
+      next(error);
       return;
     }
 
-    sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "接口不存在"));
-  };
+    if (error instanceof SyntaxError && "body" in error) {
+      sendJson(res, 400, buildError(ERROR_CODES.INVALID_JSON, "请求体不是合法 JSON"));
+      return;
+    }
+
+    console.error("[express] unhandled error:", error);
+    sendJson(res, 500, buildError(ERROR_CODES.INTERNAL_ERROR, "服务内部错误", error.message));
+  });
 }
+
+export function createApp({ config, products, vectorIndex }) {
+  const app = express();
+  installCommonMiddleware(app);
+  installRoutes(app, { config, products, vectorIndex });
+  installErrorHandlers(app);
+  return app;
+}
+
+// 兼容旧测试或旧入口里 createHandler 这个命名；现在返回的是 Express app，本质仍可传给 http.createServer。
+export const createHandler = createApp;

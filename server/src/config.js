@@ -1,5 +1,6 @@
 // 文件职责：
-// 读取 .env 和环境变量，集中管理端口、数据集路径、Doubao/Ark 配置。
+// 读取 .env 和环境变量，集中管理服务端口、数据集路径、向量库、Embedding 和 LLM Provider 配置。
+// API Key 等敏感信息只从本地环境读取，业务代码统一依赖 config，避免配置读取逻辑散落各处。
 
 import fs from "node:fs";
 import path from "node:path";

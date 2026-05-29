@@ -1,5 +1,6 @@
 // 文件职责：
-// 简单检索冒烟测试脚本，用来快速看检索结果是否合理。
+// 检索效果冒烟脚本：用固定用户问题调用本地检索链路，快速观察候选商品是否符合预期。
+// 它更偏人工检查输出，不是完整断言式单元测试。
 
 import { config } from "../config.js";
 import { loadProducts } from "../data/loader.js";

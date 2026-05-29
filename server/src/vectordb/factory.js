@@ -1,5 +1,6 @@
 // 文件职责：
-// 根据配置创建向量检索器，当前默认 local，后续可切换到 Qdrant/Chroma。
+// 向量检索器工厂：根据 VECTOR_STORE 创建 local 或 Qdrant 实现。
+// 上层只依赖统一的 search(query, candidates, limit) 接口，降低检索后端切换成本。
 
 import { createQdrantIndex } from "./qdrant.js";
 import { createVectorIndex } from "./local.js";

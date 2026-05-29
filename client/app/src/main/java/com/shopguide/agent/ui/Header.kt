@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun Header(isBackendHealthy: Boolean?) {
+    // Header 是纯展示组件：父组件传入连接状态，它只负责把状态翻译成文案和颜色。
     Column(
         modifier = Modifier
             .fillMaxWidth()

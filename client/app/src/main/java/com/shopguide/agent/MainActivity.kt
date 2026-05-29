@@ -16,6 +16,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // setContent 是 Compose 应用的入口：从这里开始挂载声明式 UI 树。
         setContent {
             ShopGuideApp()
         }
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ShopGuideApp() {
     MaterialTheme {
+        // Surface 提供整页背景和 Material 主题承载层，真正的业务页面交给 ChatScreen。
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Color(0xFFF6F7F9)

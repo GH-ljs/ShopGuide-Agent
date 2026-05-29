@@ -1,5 +1,6 @@
 // 文件职责：
-// 检查本地 Qdrant 服务是否可访问，方便确认 Docker 容器是否启动成功。
+// Qdrant 健康检查脚本：验证 Qdrant 服务和当前 collection 是否可访问。
+// 主要用于本地开发时确认 Docker 容器、URL 和 collection 配置是否正确。
 
 import { config } from "../config.js";
 

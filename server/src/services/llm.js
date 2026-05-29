@@ -1,5 +1,6 @@
 // 文件职责：
-// 调用 OpenAI-compatible 聊天模型接口，支持 Doubao/Ark 和 DeepSeek 两种 provider。
+// LLM 调用层：封装 OpenAI-compatible 聊天补全接口，支持 Doubao/Ark 和 DeepSeek Provider。
+// 以 async generator 形式逐 token 输出，供 http.js 直接转发为 SSE token 事件。
 
 import { buildModelMessages } from "./answer.js";
 

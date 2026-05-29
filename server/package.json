@@ -13,6 +13,9 @@
     "qdrant:ingest": "node src/scripts/qdrant-ingest.js",
     "qdrant:test": "node src/scripts/qdrant-search-test.js"
   },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
   "engines": {
     "node": ">=18"
   }

@@ -34,6 +34,7 @@ fun RemoteImage(
     val shape = RoundedCornerShape(8.dp)
 
     LaunchedEffect(imageUrl) {
+        // 图片下载是阻塞 IO，必须切到 Dispatchers.IO；imageUrl 改变时会重新加载。
         image = withContext(Dispatchers.IO) {
             runCatching {
                 URL(imageUrl).openStream().use { input ->
@@ -48,6 +49,7 @@ fun RemoteImage(
         .background(Color(0xFFF1F3F5), shape)
 
     if (image != null) {
+        // 加载成功后渲染真实图片，ContentScale.Crop 保证卡片缩略图尺寸稳定。
         Image(
             bitmap = image!!,
             contentDescription = contentDescription,
@@ -55,6 +57,7 @@ fun RemoteImage(
             contentScale = ContentScale.Crop
         )
     } else {
+        // 加载中或失败时保留同尺寸占位，避免聊天列表因为图片结果变化而跳动。
         Spacer(modifier = imageModifier)
     }
 }

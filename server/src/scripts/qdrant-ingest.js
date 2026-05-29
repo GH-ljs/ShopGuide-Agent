@@ -1,5 +1,6 @@
 // 文件职责：
-// 把本地商品数据生成向量并写入 Qdrant collection。
+// Qdrant 入库脚本：加载本地商品数据，生成商品 embedding，并批量写入配置的 Qdrant collection。
+// 在切换 VECTOR_STORE=qdrant 前先运行它，确保向量库中已有可检索商品。
 
 import { config } from "../config.js";
 import { loadProducts } from "../data/loader.js";

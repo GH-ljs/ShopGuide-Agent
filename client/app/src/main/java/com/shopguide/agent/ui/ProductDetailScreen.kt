@@ -34,6 +34,7 @@ fun ProductDetailScreen(
     errorMessage: String?,
     onBack: () -> Unit
 ) {
+    // 详情页根据 loading/error/detail 三种状态切换内容，这是移动端网络页面的常见状态模型。
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -77,6 +78,7 @@ fun ProductDetailScreen(
             }
 
             detail != null -> {
+                // 只有拿到完整详情数据后才渲染正文，避免 UI 直接依赖可能为空的网络结果。
                 ProductDetailContent(detail = detail)
             }
         }
@@ -85,6 +87,7 @@ fun ProductDetailScreen(
 
 @Composable
 private fun ProductDetailContent(detail: ProductDetail) {
+    // LazyColumn 适合详情页这种可滚动内容，SKU/FAQ/评价都可以作为独立 item 渲染。
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -141,6 +144,7 @@ private fun ProductDetailContent(detail: ProductDetail) {
 
         if (detail.officialFaq.isNotEmpty()) {
             item { SectionTitle("官方问答") }
+            // 详情页先展示前 3 条，保证页面紧凑；后续可扩展“查看更多”。
             items(detail.officialFaq.take(3)) { faq ->
                 CardBlock {
                     Text(text = faq.question, fontWeight = FontWeight.SemiBold)
@@ -152,6 +156,7 @@ private fun ProductDetailContent(detail: ProductDetail) {
 
         if (detail.userReviews.isNotEmpty()) {
             item { SectionTitle("用户评价") }
+            // 评价同样截取前 3 条，避免长列表淹没商品核心信息。
             items(detail.userReviews.take(3)) { review ->
                 CardBlock {
                     Text(text = "${review.nickname}  评分 ${review.rating}", fontWeight = FontWeight.SemiBold)
@@ -175,6 +180,7 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun CardBlock(content: @Composable ColumnScope.() -> Unit) {
+    // CardBlock 统一详情页每个信息块的白底卡片样式，减少重复布局代码。
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.White),

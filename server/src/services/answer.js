@@ -1,5 +1,6 @@
 // 文件职责：
-// 生成商品卡片、商品详情、本地兜底回答，以及构造发给大模型的 Prompt。
+// 回答构造层：生成客户端商品卡片、商品详情、本地兜底回答，以及发送给大模型的结构化 Prompt。
+// 这里维护“回答必须基于商品数据”的边界，避免模型编造商品、价格、库存或优惠。
 function shortDescription(product) {
   const text = product.marketingDescription || product.title;
   return text.length > 90 ? `${text.slice(0, 90)}...` : text;
@@ -10,6 +11,7 @@ function imageUrlFor(product) {
 }
 
 export function buildProductCards(products) {
+  // 卡片只暴露客户端展示所需字段，避免把完整 RAG 文本、源文件路径等内部信息塞进聊天流。
   return products.map((product) => ({
     productId: product.productId,
     title: product.title,
@@ -24,6 +26,7 @@ export function buildProductCards(products) {
 }
 
 export function buildProductDetail(product) {
+  // 详情页可以看到更完整的 FAQ、SKU、评价等字段，但仍全部来自商品数据源。
   return {
     productId: product.productId,
     title: product.title,
@@ -55,12 +58,14 @@ export function buildLocalAnswer(message, products, history = [], state = {}) {
     const reason = shortDescription(product);
     return `${index + 1}. ${product.title}，参考价 ${product.basePrice} 元。推荐理由：${reason}`;
   });
+  // 兜底回答也保留防幻觉边界：价格、规格、优惠等只能以商品卡片/详情中的真实数据为准。
   const guardrail = "以上推荐只基于当前商品库信息，价格和规格以商品卡片/详情为准，我不会额外编造优惠或库存。";
 
   return [intro, stateNote, ...lines, guardrail].filter(Boolean).join("\n");
 }
 
 export function buildModelMessages(message, products, history = [], state = {}) {
+  // 给模型的商品上下文是结构化 JSON，目的是让模型基于明确字段回答，而不是自由猜商品信息。
   const productContext = products.map((product, index) => ({
     index: index + 1,
     product_id: product.productId,

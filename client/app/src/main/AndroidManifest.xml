@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 客户端需要访问本机后端 HTTP/SSE 接口和商品图片接口。 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 开发阶段后端是 http://10.0.2.2:3001，Android 9+ 默认会拦截明文 HTTP，所以这里显式允许。 -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

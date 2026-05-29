@@ -1,5 +1,6 @@
 // 文件职责：
-// 验证 Qdrant collection 已入库，并能按用户问题召回商品。
+// Qdrant 检索验证脚本：用示例用户问题查询 Qdrant，检查 collection 入库结果和召回质量。
+// 适合在调整 embedding、collection 或商品数据后快速确认向量检索链路。
 
 import { config } from "../config.js";
 import { loadProducts } from "../data/loader.js";

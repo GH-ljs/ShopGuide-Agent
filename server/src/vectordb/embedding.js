@@ -1,5 +1,6 @@
 // 文件职责：
-// 把商品文本或用户问题转成固定长度向量，供 Qdrant 入库和查询使用。
+// Embedding 统一入口：把商品文本或用户问题转成固定长度向量。
+// 支持本地哈希 embedding 和 Ark 多模态 embedding，供 Qdrant 入库、查询和本地验证使用。
 
 import { tokenizeForVector } from "../utils/nlp.js";
 
@@ -115,6 +116,7 @@ async function embedTextWithArk(config, text) {
 }
 
 export async function embedText(config, text) {
+  // 统一 embedding 入口：业务层不用关心当前是本地哈希向量，还是外部 Ark 多模态 embedding。
   if (config.embeddingProvider === "ark") {
     return embedTextWithArk(config, text);
   }

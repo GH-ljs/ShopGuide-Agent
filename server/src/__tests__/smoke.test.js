@@ -1,10 +1,10 @@
 // 文件职责：
-// 端到端冒烟测试：启动服务并验证核心 API 和 SSE 事件是否可用。
+// 后端最小闭环冒烟测试：临时启动 Express 服务，验证健康检查、商品接口、会话重置和 /api/chat SSE 事件。
+// 测试默认关闭真实 LLM，使用本地兜底回答，确保无 API Key 环境也能验证端到端链路。
 
-import http from "node:http";
 import { config } from "../config.js";
 import { loadProducts } from "../data/loader.js";
-import { createHandler } from "../http.js";
+import { createApp } from "../http.js";
 import { createSearchIndex } from "../vectordb/factory.js";
 
 function assert(condition, message) {
@@ -29,9 +29,11 @@ async function createTestServer() {
   const products = loadProducts(config.datasetDir);
   const testConfig = { ...config, port: 0, arkApiKey: "", deepseekApiKey: "", llmApiKey: "", vectorStore: "local" };
   const vectorIndex = createSearchIndex(testConfig, products);
-  const server = http.createServer(createHandler({ config: testConfig, products, vectorIndex }));
+  const app = createApp({ config: testConfig, products, vectorIndex });
 
-  await new Promise((resolve) => server.listen(0, resolve));
+  const server = await new Promise((resolve) => {
+    const instance = app.listen(0, () => resolve(instance));
+  });
   return { server, port: server.address().port };
 }
 

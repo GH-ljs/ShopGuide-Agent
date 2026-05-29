@@ -1,5 +1,6 @@
 // 文件职责：
-// 快速验证当前 embedding 配置是否能生成指定维度的向量。
+// Embedding 配置验证脚本：检查当前 EMBEDDING_PROVIDER 是否能生成指定维度的向量。
+// 可用于区分本地 embedding 逻辑问题和外部 Ark embedding 网络/API 配置问题。
 
 import { config } from "../config.js";
 import { embedText } from "../vectordb/embedding.js";

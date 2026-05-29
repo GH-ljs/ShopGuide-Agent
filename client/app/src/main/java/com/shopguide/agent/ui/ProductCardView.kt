@@ -28,6 +28,7 @@ fun ProductCardView(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            // 点击卡片只把 productId 交回上层，真正的详情请求由 ChatScreen 统一触发。
             .clickable { onClick(product) },
         colors = CardDefaults.cardColors(containerColor = Color.White),
         shape = RoundedCornerShape(8.dp),
@@ -64,6 +65,7 @@ fun ProductCardView(
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
+                // reason 是后端基于商品数据给出的简短推荐理由，用于解释“为什么推荐它”。
                 text = product.reason,
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF5F6673)

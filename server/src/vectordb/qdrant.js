@@ -1,5 +1,6 @@
 // 文件职责：
-// 封装 Qdrant collection 创建、商品向量写入，以及基于用户问题的向量检索。
+// Qdrant 向量库适配层：封装 collection 创建、商品向量批量写入，以及带候选过滤的向量检索。
+// Qdrant 只负责相似度排序，商品详情和可信事实仍以本地商品数据结构为准。
 
 import { buildProductEmbeddingText, embedText } from "./embedding.js";
 
@@ -93,6 +94,7 @@ export async function upsertProductsToQdrant(config, products) {
   let written = 0;
   for (let i = 0; i < products.length; i += batchSize) {
     const batchProducts = products.slice(i, i + batchSize);
+    // 批量写入可以减少 HTTP 请求次数；payload 保留结构化字段，详情仍以本地商品库为准。
     const batch = await Promise.all(
       batchProducts.map(async (product, offset) => ({
         id: pointIdForProduct(product, i + offset),
@@ -117,6 +119,7 @@ export function createQdrantIndex(config, products) {
 
   return {
     async search(query, candidates, limit = 4) {
+      // Qdrant 负责语义排序，retriever 传入的 candidates 仍作为预算/类目等硬约束边界。
       const candidateIds = candidates.map((product) => product.productId);
       if (candidateIds.length === 0) return [];
 

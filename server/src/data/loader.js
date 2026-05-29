@@ -1,5 +1,6 @@
 // 文件职责：
-// 递归读取商品 JSON，把原始数据整理成后端统一商品结构。
+// 递归读取电商数据集 JSON，把原始商品字段规范化为后端统一 Product 结构。
+// 同时拼接 searchableText，作为本地检索和向量化入库的可信商品文本来源。
 
 import fs from "node:fs";
 import path from "node:path";

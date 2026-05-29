@@ -8,6 +8,12 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+/**
+ * 商品详情接口客户端。
+ *
+ * 聊天页只拿 ProductCard，详情页再按 productId 单独请求完整商品信息，
+ * 这样可以让聊天流更轻，也让“卡片展示”和“详情浏览”两个职责分开。
+ */
 object ProductDetailApi {
     fun getProductDetail(productId: String): ProductDetail {
         val url = URL("${ApiConfig.BASE_URL}/api/products/${productId}")
@@ -30,6 +36,7 @@ object ProductDetailApi {
     }
 
     private fun parseDetail(json: JSONObject): ProductDetail {
+        // 这里把后端 JSON 转成 Kotlin data class，UI 层只面对强类型对象，不直接操作 JSONObject。
         return ProductDetail(
             productId = json.optString("productId"),
             title = json.optString("title"),
@@ -51,6 +58,7 @@ object ProductDetailApi {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
                 val properties = item.optJSONObject("properties")
+                // properties 是动态键值，例如“规格: 100ml / 颜色: 黑色”，展示前先压平成可读文本。
                 val propertiesText = properties
                     ?.keys()
                     ?.asSequence()
@@ -108,6 +116,7 @@ object ProductDetailApi {
     }
 
     private fun absoluteUrl(path: String): String {
+        // 详情页图片和聊天卡片图片共用后端图片接口，相对路径需要补齐服务地址。
         if (path.startsWith("http://") || path.startsWith("https://")) return path
         if (path.startsWith("/")) return "${ApiConfig.BASE_URL}$path"
         return path

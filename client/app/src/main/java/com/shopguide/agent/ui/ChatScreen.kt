@@ -31,6 +31,7 @@ import java.util.UUID
 
 @Composable
 fun ChatScreen() {
+    // remember 保存 Compose 状态；状态变化会触发相关 UI 自动重组，不需要手动 findViewById 更新控件。
     var input by remember { mutableStateOf("") }
     var isBackendHealthy by remember { mutableStateOf<Boolean?>(null) }
     var isStreaming by remember { mutableStateOf(false) }
@@ -40,6 +41,7 @@ fun ChatScreen() {
     var detailError by remember { mutableStateOf<String?>(null) }
     val conversationId = remember { UUID.randomUUID().toString() }
     val scope = rememberCoroutineScope()
+    // mutableStateListOf 是 Compose 可观察列表；新增消息或替换消息对象时，LazyColumn 会自动刷新。
     val messages = remember {
         mutableStateListOf(
             ChatMessage(
@@ -51,6 +53,7 @@ fun ChatScreen() {
     }
 
     fun goBackToChat() {
+        // 详情页只是聊天页上的一个临时视图状态，清空选中商品即可回到聊天列表。
         selectedProductId = null
         detail = null
         detailError = null
@@ -58,6 +61,7 @@ fun ChatScreen() {
     }
 
     LaunchedEffect(Unit) {
+        // 首次进入页面时检查后端是否可用；网络 IO 放到 Dispatchers.IO，避免阻塞 UI 线程。
         isBackendHealthy = withContext(Dispatchers.IO) {
             runCatching { HealthApi.checkHealth() }.getOrDefault(false)
         }
@@ -65,6 +69,7 @@ fun ChatScreen() {
 
     LaunchedEffect(selectedProductId) {
         val productId = selectedProductId ?: return@LaunchedEffect
+        // selectedProductId 变化代表用户点击了某张商品卡片，随后按需加载详情。
         detail = null
         detailError = null
         detailLoading = true
@@ -77,6 +82,7 @@ fun ChatScreen() {
     }
 
     BackHandler(enabled = selectedProductId != null) {
+        // Android 返回键在详情页优先回到聊天页，而不是直接退出 App。
         goBackToChat()
     }
 
@@ -116,6 +122,7 @@ fun ChatScreen() {
                 val userText = input.trim()
                 if (userText.isEmpty() || isStreaming) return@InputBar
 
+                // 先把用户消息加入列表，让用户立刻看到自己发出的内容。
                 messages.add(
                     ChatMessage(
                         id = messages.size + 1,
@@ -125,6 +132,7 @@ fun ChatScreen() {
                 )
 
                 val assistantMessageId = messages.size + 1
+                // 再创建一条空的助手占位消息，后续 SSE token 会不断填充它的 text。
                 messages.add(
                     ChatMessage(
                         id = assistantMessageId,
@@ -142,6 +150,7 @@ fun ChatScreen() {
                             message = userText,
                             onToken = { token ->
                                 scope.launch {
+                                    // token 回调来自 IO 线程，通过 scope.launch 回到 Compose 协程上下文更新状态。
                                     updateAssistantMessage(messages, assistantMessageId) { old ->
                                         old.copy(text = old.text + token)
                                     }
@@ -149,16 +158,19 @@ fun ChatScreen() {
                             },
                             onProducts = { products ->
                                 scope.launch {
+                                    // products 事件到达后一次性挂到同一条助手消息下面，MessageBubble 会渲染商品卡片。
                                     updateAssistantMessage(messages, assistantMessageId) { old ->
                                         old.copy(products = products)
                                     }
                                 }
                             },
                             onDone = {
+                                // done 表示本轮 SSE 正常结束，输入框可以恢复可用。
                                 scope.launch { isStreaming = false }
                             },
                             onError = { message ->
                                 scope.launch {
+                                    // 如果还没有收到任何 token，就用错误文案填充占位助手消息。
                                     updateAssistantMessage(messages, assistantMessageId) { old ->
                                         old.copy(text = old.text.ifBlank { "请求失败：$message" })
                                     }
@@ -167,6 +179,7 @@ fun ChatScreen() {
                             }
                         )
                     }
+                    // 兜底收尾：即使后端漏发 done，也避免输入框一直处于“发送中”。
                     isStreaming = false
                 }
             }
@@ -181,6 +194,7 @@ private fun updateAssistantMessage(
 ) {
     val index = messages.indexOfFirst { it.id == messageId }
     if (index >= 0) {
+        // 通过替换整个 ChatMessage 对象触发 Compose 列表项重组，而不是原地修改不可变 data class。
         messages[index] = transform(messages[index])
     }
 }
