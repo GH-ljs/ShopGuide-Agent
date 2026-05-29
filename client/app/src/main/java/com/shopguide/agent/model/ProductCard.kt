@@ -1,13 +1,15 @@
 package com.shopguide.agent.model
 
 /**
- * 商品卡片数据。
- *
- * 当前先保留最小展示字段；接入后端后会和 products 事件字段继续对齐。
+ * 商品卡片数据，字段直接对应后端 products SSE 事件。
  */
 data class ProductCard(
+    val productId: String,
     val title: String,
     val brand: String,
+    val category: String,
+    val subCategory: String,
     val price: String,
+    val imageUrl: String,
     val reason: String
 )

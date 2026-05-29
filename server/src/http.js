@@ -1,6 +1,8 @@
 // 文件职责：
-// 定义后端 API：/api/health、/api/products、/api/chat，并处理 SSE 流式输出。
-import { buildLocalAnswer, buildProductCards } from "./services/answer.js";
+// 定义后端 API，包含健康检查、商品列表、商品详情、商品图片、导购对话和检索调试。
+import fs from "node:fs";
+import path from "node:path";
+import { buildLocalAnswer, buildProductCards, buildProductDetail } from "./services/answer.js";
 import { buildError, ERROR_CODES } from "./utils/errors.js";
 import { streamModelAnswer } from "./services/llm.js";
 import {
@@ -19,7 +21,8 @@ function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body)
+    "Content-Length": Buffer.byteLength(body),
+    "Access-Control-Allow-Origin": "*"
   });
   res.end(body);
 }
@@ -53,6 +56,31 @@ function writeSseHeaders(res) {
   });
 }
 
+function contentTypeForImage(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  return "image/jpeg";
+}
+
+function findProduct(products, productId) {
+  return products.find((item) => item.productId === productId);
+}
+
+function sendImageFile(res, filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
+    sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品图片不存在"));
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": contentTypeForImage(filePath),
+    "Cache-Control": "public, max-age=3600",
+    "Access-Control-Allow-Origin": "*"
+  });
+  fs.createReadStream(filePath).pipe(res);
+}
+
 async function handleChat({ body, config, products, vectorIndex, res }) {
   const message = String(body.message || "").trim();
   if (!message) {
@@ -69,8 +97,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const history = getRecentTurns(session);
     const retrievalQuery = buildRetrievalQuery(session, message);
 
-    // 检索也属于 RAG 链路的一部分，必须被 try/catch 包住。
-    // 否则 Qdrant 或 embedding 服务异常时，客户端只会看到 connection reset。
+    // 检索属于 RAG 链路的一部分，也必须被 try/catch 包住。
     const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
     const cards = buildProductCards(matchedProducts);
 
@@ -92,7 +119,6 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     writeSse(res, "products", { products: cards });
     writeSse(res, "done", { ok: true, conversationId });
   } catch (error) {
-    // 这里一定要打印真实错误，否则客户端只能看到统一错误文案，无法判断是检索还是模型失败。
     console.error("[/api/chat] failed:", error);
     writeSse(
       res,
@@ -128,18 +154,21 @@ export function createHandler({ config, products, vectorIndex }) {
     }
 
     if (req.method === "GET" && url.pathname === "/api/products") {
-      return sendJson(
-        res,
-        200,
-        products.map((product) => ({
-          productId: product.productId,
-          title: product.title,
-          brand: product.brand,
-          category: product.category,
-          price: product.basePrice,
-          imagePath: product.imagePath
-        }))
-      );
+      return sendJson(res, 200, buildProductCards(products));
+    }
+
+    const imageMatch = url.pathname.match(/^\/api\/products\/([^/]+)\/image$/);
+    if (req.method === "GET" && imageMatch) {
+      const product = findProduct(products, decodeURIComponent(imageMatch[1]));
+      if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
+      return sendImageFile(res, product.imagePath);
+    }
+
+    const detailMatch = url.pathname.match(/^\/api\/products\/([^/]+)$/);
+    if (req.method === "GET" && detailMatch) {
+      const product = findProduct(products, decodeURIComponent(detailMatch[1]));
+      if (!product) return sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品不存在"));
+      return sendJson(res, 200, buildProductDetail(product));
     }
 
     if (req.method === "POST" && url.pathname === "/api/conversations/reset") {

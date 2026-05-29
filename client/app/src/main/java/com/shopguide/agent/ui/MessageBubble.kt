@@ -19,9 +19,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
+import com.shopguide.agent.model.ProductCard
 
 @Composable
-fun MessageBubble(message: ChatMessage) {
+fun MessageBubble(
+    message: ChatMessage,
+    onProductClick: (ProductCard) -> Unit
+) {
     val isUser = message.role == MessageRole.User
 
     Row(
@@ -32,26 +36,31 @@ fun MessageBubble(message: ChatMessage) {
             modifier = Modifier.fillMaxWidth(if (isUser) 0.78f else 0.92f),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
-            Box(
-                modifier = Modifier
-                    .background(
-                        color = if (isUser) Color(0xFF2F6FED) else Color.White,
-                        shape = RoundedCornerShape(8.dp)
+            if (message.text.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .background(
+                            color = if (isUser) Color(0xFF2F6FED) else Color.White,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = message.text,
+                        color = if (isUser) Color.White else Color(0xFF1F2328),
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                Text(
-                    text = message.text,
-                    color = if (isUser) Color.White else Color(0xFF1F2328),
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                }
             }
 
             if (message.products.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     message.products.forEach { product ->
-                        ProductCardView(product = product)
+                        ProductCardView(
+                            product = product,
+                            onClick = onProductClick
+                        )
                     }
                 }
             }

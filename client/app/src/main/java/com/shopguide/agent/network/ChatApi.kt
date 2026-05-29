@@ -9,11 +9,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Calls /api/chat and parses the text/event-stream response.
- *
- * The backend sends event/data line pairs, for example:
- * event: token
- * data: {"content":"..."}
+ * Calls /api/chat and parses token/products/done/error SSE events.
  */
 object ChatApi {
     fun streamChat(
@@ -68,7 +64,7 @@ object ChatApi {
                 }
             }
         } catch (error: Exception) {
-            onError(error.message ?: "聊天请求失败")
+            onError(error.message ?: "Chat request failed")
         } finally {
             connection.disconnect()
         }
@@ -95,9 +91,13 @@ object ChatApi {
                         val item = productsJson.getJSONObject(index)
                         add(
                             ProductCard(
+                                productId = item.optString("productId"),
                                 title = item.optString("title"),
                                 brand = item.optString("brand"),
+                                category = item.optString("category"),
+                                subCategory = item.optString("subCategory"),
                                 price = formatPrice(item.opt("price")),
+                                imageUrl = absoluteUrl(item.optString("imageUrl")),
                                 reason = item.optString("reason")
                             )
                         )
@@ -110,9 +110,9 @@ object ChatApi {
 
             "error" -> {
                 val error = JSONObject(data).optJSONObject("error")
-                val message = error?.optString("message") ?: "后端返回错误"
+                val message = error?.optString("message") ?: "Backend error"
                 val details = error?.optString("details").orEmpty()
-                onError(if (details.isBlank()) message else "$message：$details")
+                onError(if (details.isBlank()) message else "$message: $details")
             }
         }
     }
@@ -123,5 +123,11 @@ object ChatApi {
             is String -> if (value.isBlank()) "" else "CNY $value"
             else -> ""
         }
+    }
+
+    private fun absoluteUrl(path: String): String {
+        if (path.startsWith("http://") || path.startsWith("https://")) return path
+        if (path.startsWith("/")) return "${ApiConfig.BASE_URL}$path"
+        return path
     }
 }

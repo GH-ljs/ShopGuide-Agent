@@ -1,5 +1,6 @@
 package com.shopguide.agent.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,8 +20,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
+import com.shopguide.agent.model.ProductDetail
 import com.shopguide.agent.network.ChatApi
 import com.shopguide.agent.network.HealthApi
+import com.shopguide.agent.network.ProductDetailApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -31,6 +34,10 @@ fun ChatScreen() {
     var input by remember { mutableStateOf("") }
     var isBackendHealthy by remember { mutableStateOf<Boolean?>(null) }
     var isStreaming by remember { mutableStateOf(false) }
+    var selectedProductId by remember { mutableStateOf<String?>(null) }
+    var detail by remember { mutableStateOf<ProductDetail?>(null) }
+    var detailLoading by remember { mutableStateOf(false) }
+    var detailError by remember { mutableStateOf<String?>(null) }
     val conversationId = remember { UUID.randomUUID().toString() }
     val scope = rememberCoroutineScope()
     val messages = remember {
@@ -43,10 +50,44 @@ fun ChatScreen() {
         )
     }
 
+    fun goBackToChat() {
+        selectedProductId = null
+        detail = null
+        detailError = null
+        detailLoading = false
+    }
+
     LaunchedEffect(Unit) {
         isBackendHealthy = withContext(Dispatchers.IO) {
             runCatching { HealthApi.checkHealth() }.getOrDefault(false)
         }
+    }
+
+    LaunchedEffect(selectedProductId) {
+        val productId = selectedProductId ?: return@LaunchedEffect
+        detail = null
+        detailError = null
+        detailLoading = true
+        val result = withContext(Dispatchers.IO) {
+            runCatching { ProductDetailApi.getProductDetail(productId) }
+        }
+        detail = result.getOrNull()
+        detailError = result.exceptionOrNull()?.message
+        detailLoading = false
+    }
+
+    BackHandler(enabled = selectedProductId != null) {
+        goBackToChat()
+    }
+
+    if (selectedProductId != null) {
+        ProductDetailScreen(
+            detail = detail,
+            isLoading = detailLoading,
+            errorMessage = detailError,
+            onBack = { goBackToChat() }
+        )
+        return
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -60,7 +101,10 @@ fun ChatScreen() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(messages, key = { it.id }) { message ->
-                MessageBubble(message = message)
+                MessageBubble(
+                    message = message,
+                    onProductClick = { product -> selectedProductId = product.productId }
+                )
             }
         }
 
