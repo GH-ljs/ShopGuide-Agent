@@ -50,6 +50,14 @@ function run() {
   assert(productPrompt.includes("本轮商品卡片会展示 1 个候选商品"), "prompt should bind answer count to product cards");
   assert(productPrompt.includes("不要跳过、不要新增候选之外的商品"), "prompt should forbid extra or skipped products");
 
+  const historyMessages = buildModelMessages("1万预算", [first], [
+    { role: "user", content: "OLD_USER_NEED" },
+    { role: "assistant", content: "SHOULD_NOT_LEAK_OLD_PRODUCTS" }
+  ]);
+  const historyPrompt = historyMessages.map((item) => item.content).join("\n");
+  assert(historyPrompt.includes("OLD_USER_NEED"), "prompt should keep recent user context");
+  assert(!historyPrompt.includes("SHOULD_NOT_LEAK_OLD_PRODUCTS"), "prompt should not reuse old assistant product lists as facts");
+
   console.log("Answer tests passed.");
 }
 

@@ -53,11 +53,11 @@ async function postJson(baseUrl, path, payload) {
   return response.json();
 }
 
-async function requestChat(baseUrl, message, conversationId = "smoke-demo", history = []) {
+async function requestChat(baseUrl, message, conversationId = "smoke-demo", history = [], limit = undefined) {
   const response = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ conversationId, message, history })
+    body: JSON.stringify({ conversationId, message, history, limit })
   });
 
   assert(response.ok, "/api/chat should return 2xx");
@@ -102,6 +102,16 @@ async function run() {
       "refer turn should keep the first product instead of searching unrelated products"
     );
 
+    const sequentialSetup = await requestChat(baseUrl, "推荐一款适合油皮的防晒霜", "sequential-refer-demo");
+    const sequentialSetupProducts = sequentialSetup.find((item) => item.event === "products")?.data.products || [];
+    assert(sequentialSetupProducts.length >= 3, "sequential refer setup should keep at least three candidates");
+    const sequentialSecond = await requestChat(baseUrl, "第二款怎么样", "sequential-refer-demo");
+    const sequentialSecondProducts = sequentialSecond.find((item) => item.event === "products")?.data.products || [];
+    assert(sequentialSecondProducts[0].productId === sequentialSetupProducts[1].productId, "second refer should return original second candidate");
+    const sequentialThird = await requestChat(baseUrl, "第三款呢", "sequential-refer-demo");
+    const sequentialThirdProducts = sequentialThird.find((item) => item.event === "products")?.data.products || [];
+    assert(sequentialThirdProducts[0].productId === sequentialSetupProducts[2].productId, "third refer should still return original third candidate after second refer");
+
     await requestChat(baseUrl, "推荐防晒霜", "new-search-demo");
     const newSearch = await requestChat(baseUrl, "我想买蓝牙耳机", "new-search-demo");
     const newSearchProducts = newSearch.find((item) => item.event === "products")?.data.products || [];
@@ -109,6 +119,53 @@ async function run() {
     assert(
       newSearchProducts.every((product) => product.category === "数码电子" && product.subCategory.includes("耳机")),
       "new search should reset previous skincare context"
+    );
+
+    await requestChat(baseUrl, "推荐一款适合油皮的防晒霜", "price-direction-demo");
+    const pricier = await requestChat(baseUrl, "太便宜了", "price-direction-demo");
+    const pricierProducts = pricier.find((item) => item.event === "products")?.data.products || [];
+    assert(pricierProducts.length > 0, "pricier follow-up should return products");
+    assert(
+      pricierProducts.every((product) => Number(product.price) > 170),
+      "太便宜了 should move toward higher-priced candidates instead of cheaper ones"
+    );
+
+    const laptopSetup = await requestChat(baseUrl, "想买一台办公轻薄笔记本", "cheap-laptop-demo");
+    const laptopSetupProducts = laptopSetup.find((item) => item.event === "products")?.data.products || [];
+    assert(laptopSetupProducts.length >= 4, "laptop setup should return several candidates");
+    const cheaperLaptop = await requestChat(baseUrl, "便宜的", "cheap-laptop-demo");
+    const cheaperLaptopProducts = cheaperLaptop.find((item) => item.event === "products")?.data.products || [];
+    assert(cheaperLaptopProducts.length > 0, "便宜的 should keep matching candidates");
+    assert(
+      cheaperLaptopProducts.every((product) => Number(product.price) <= 8499),
+      "便宜的 should narrow laptop candidates to the lower price range"
+    );
+
+    await requestChat(baseUrl, "想买一台办公轻薄笔记本", "budget-laptop-demo");
+    const budgetLaptop = await requestChat(baseUrl, "1万预算", "budget-laptop-demo");
+    const budgetLaptopProducts = budgetLaptop.find((item) => item.event === "products")?.data.products || [];
+    assert(budgetLaptopProducts.length > 0, "1万预算 should return matching products");
+    assert(
+      budgetLaptopProducts.every((product) => Number(product.price) <= 10000),
+      "1万预算 should filter out products over 10000"
+    );
+
+    const appLimitSetup = await requestChat(baseUrl, "想买一台办公轻薄笔记本", "app-limit-budget-demo", [], 6);
+    const appLimitSetupProducts = appLimitSetup.find((item) => item.event === "products")?.data.products || [];
+    assert(appLimitSetupProducts.length >= 5, "app limit setup should reproduce the client-side six-card scenario");
+    const appLimitCheaper = await requestChat(baseUrl, "便宜的", "app-limit-budget-demo", [], 6);
+    const appLimitCheaperProducts = appLimitCheaper.find((item) => item.event === "products")?.data.products || [];
+    assert(appLimitCheaperProducts.length > 0, "便宜的 should keep lower-price candidates with client limit");
+    assert(
+      appLimitCheaperProducts.every((product) => Number(product.price) <= 8499),
+      "便宜的 with client limit should not keep the expensive half of the previous candidates"
+    );
+    const appLimitBudget = await requestChat(baseUrl, "1万预算", "app-limit-budget-demo", [], 6);
+    const appLimitBudgetProducts = appLimitBudget.find((item) => item.event === "products")?.data.products || [];
+    assert(appLimitBudgetProducts.length === 3, "1万预算 with client limit should count exactly the three matching notebook products");
+    assert(
+      appLimitBudgetProducts.every((product) => Number(product.price) <= 10000),
+      "1万预算 with client limit should not display over-budget products"
     );
 
     const restored = await requestChat(baseUrl, "再便宜点", "history-restore-demo", [

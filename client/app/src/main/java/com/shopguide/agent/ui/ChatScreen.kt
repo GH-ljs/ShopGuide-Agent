@@ -46,6 +46,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +70,8 @@ import com.shopguide.agent.network.ProductDetailApi
 import com.shopguide.agent.storage.ConversationSummary
 import com.shopguide.agent.storage.ConversationStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -104,6 +107,7 @@ fun ChatScreen() {
     var pendingSendScrollToBottom by remember { mutableStateOf(false) }
     var pendingStreamScrollToBottom by remember { mutableStateOf(false) }
     var isInputFocused by remember { mutableStateOf(false) }
+    var programmaticScrollInProgress by remember { mutableStateOf(false) }
 
     fun hideKeyboardIfInputFocused(): Boolean {
         if (!isInputFocused) return false
@@ -112,6 +116,19 @@ fun ChatScreen() {
         keyboardController?.hide()
         isInputFocused = false
         return true
+    }
+
+    suspend fun scrollToConversationBottom(anchorIndex: Int, animated: Boolean) {
+        programmaticScrollInProgress = true
+        try {
+            if (animated) {
+                listState.animateScrollToItem(anchorIndex)
+            } else {
+                listState.scrollToItem(anchorIndex)
+            }
+        } finally {
+            programmaticScrollInProgress = false
+        }
     }
 
     // mutableStateListOf 是 Compose 可观察列表；替换某条消息对象时，聊天列表会自动刷新。
@@ -214,7 +231,7 @@ fun ChatScreen() {
                     history = historyForRequest,
                     onToken = { token ->
                         scope.launch {
-                            pendingStreamScrollToBottom = isNearConversationBottom(listState)
+                            pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
                             // token 来自 SSE 流。第一段 token 到达时替换掉加载文案，形成自然的流式回答。
                             updateAssistantMessage(messages, assistantMessageId) { old ->
                                 val baseText = if (old.text == LOADING_TEXT) "" else old.text
@@ -224,7 +241,7 @@ fun ChatScreen() {
                     },
                     onProducts = { products ->
                         scope.launch {
-                            pendingStreamScrollToBottom = isNearConversationBottom(listState)
+                            pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
                             // 商品卡片必须来自后端结构化 products 事件，避免客户端从模型自然语言里猜商品。
                             updateAssistantMessage(messages, assistantMessageId) { old ->
                                 old.copy(products = products)
@@ -264,28 +281,52 @@ fun ChatScreen() {
         detailLoading = false
     }
 
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            Triple(
+                listState.isScrollInProgress,
+                isNearConversationBottom(listState),
+                programmaticScrollInProgress
+            )
+        }.collect { (isScrolling, isNearBottom, isProgrammatic) ->
+            if (!isScrolling || isProgrammatic) return@collect
+
+            // 自动滚动是“跟随底部”模式：用户手动上滑查看历史时关闭跟随，避免新 token 抢回底部；
+            // 用户手动滑回底部后再恢复跟随，后续流式内容和商品卡片才继续贴底。
+            shouldAutoScroll = isNearBottom
+        }
+    }
+
     LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.products?.size) {
         ConversationStore.saveMessages(context, messages)
 
         if (messages.isEmpty()) return@LaunchedEffect
+        val bottomAnchorIndex = messages.size
 
         when {
             pendingInstantScrollToBottom -> {
-                // 切换会话要直接显示底部，不做动画，避免用户看到“从上滚到下”的过程。
-                listState.scrollToItem(messages.lastIndex)
+                // 切换会话要直接显示底部，不做动画。滚到末尾锚点而不是最后一条消息，
+                // 可以保证长回复或带商品卡片的消息也显示到真正底部。
+                scrollToConversationBottom(bottomAnchorIndex, animated = false)
                 pendingInstantScrollToBottom = false
             }
 
             pendingSendScrollToBottom -> {
                 // 用户刚发送消息时主动跟到底部，让新一轮问答从当前位置开始展示。
-                listState.animateScrollToItem(messages.lastIndex)
+                scrollToConversationBottom(bottomAnchorIndex, animated = true)
                 pendingSendScrollToBottom = false
             }
 
             shouldAutoScroll && pendingStreamScrollToBottom -> {
-                // token 或商品卡片到达前如果用户还在底部附近，就继续跟随。
-                // 这个判断在状态更新前记录，能覆盖“卡片突然插入导致列表变长”的场景。
-                listState.animateScrollToItem(messages.lastIndex)
+                // 流式 token 很密集，反复启动动画会互相打断并追不上内容增长；
+                // 这里直接贴到底部锚点，保证最终回复和商品卡片始终露出。
+                scrollToConversationBottom(bottomAnchorIndex, animated = false)
+                delay(80)
+                if (shouldAutoScroll) {
+                    // 商品卡片插入后 Compose 可能还会经历一次高度测量；补贴一次底部，
+                    // 避免第一次滚动发生得太早，导致卡片只露出一部分。
+                    scrollToConversationBottom(bottomAnchorIndex, animated = false)
+                }
                 pendingStreamScrollToBottom = false
             }
         }
@@ -378,6 +419,9 @@ fun ChatScreen() {
                             }
                         }
                     )
+                }
+                item(key = "conversation-bottom-anchor") {
+                    Spacer(modifier = Modifier.height(1.dp))
                 }
             }
 
@@ -973,8 +1017,15 @@ private fun isNearConversationBottom(listState: LazyListState): Boolean {
     if (totalItems == 0) return true
 
     val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return true
-    // 留 1 条消息的容差：商品卡片和流式文本高度会变化，过于严格会导致明明在底部却不跟随。
-    return lastVisibleIndex >= totalItems - 2
+    val bottomAnchorIndex = totalItems - 1
+    if (lastVisibleIndex >= bottomAnchorIndex) return true
+
+    val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull() ?: return true
+    val distanceToBottom = lastVisibleItem.offset + lastVisibleItem.size - layoutInfo.viewportEndOffset
+
+    // 只有真正接近底部时才继续跟随。长 AI 回复中途可见不等于已经到底部，
+    // 这里保留少量像素容差，是为了覆盖卡片插入或文本换行导致的轻微高度变化。
+    return lastVisibleIndex == bottomAnchorIndex - 1 && distanceToBottom <= 160
 }
 
 private fun updateAssistantMessage(

@@ -4,6 +4,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -53,13 +55,26 @@ fun ProductCardView(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "${product.brand} - ${product.price}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF2F6FED),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = product.brand,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF2F6FED),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "- ${product.price}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF2F6FED),
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip
+                    )
+                }
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = listOf(product.category, product.subCategory)

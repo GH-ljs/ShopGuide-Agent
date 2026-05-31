@@ -27,6 +27,16 @@ import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services
 const DEFAULT_CHAT_PRODUCT_LIMIT = 4;
 const MAX_CHAT_PRODUCT_LIMIT = 8;
 
+function shouldUseDeterministicAnswer(config, turnIntent, state, message) {
+  if (!config.llmApiKey) return true;
+  const hasPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
+  const isPriceFollowUp = /(便宜|贵|预算|以内|以下|不超过|不要超过|最多|控制在|\d+\s*万)/.test(message);
+
+  // 预算和价格方向属于后端可验证的硬约束，优先使用确定性回答可以保证“文字列出的商品”和
+  // products 事件里的卡片完全一致，避免模型被历史回答里的旧候选污染后继续展示不符合条件的商品。
+  return turnIntent.type === TURN_INTENTS.REFER || hasPriceBoundary || isPriceFollowUp;
+}
+
 function sendJson(res, status, payload) {
   res.status(status).json(payload);
 }
@@ -140,7 +150,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const cards = buildProductCards(answerProducts);
 
     let answerText = "";
-    if (config.llmApiKey) {
+    if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
         for await (const token of streamModelAnswer(config, message, answerProducts, history, state)) {
@@ -156,6 +166,8 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       }
     } else {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
+      // 价格/预算/指代追问使用后端确定性回答：这类问题的正确性主要取决于硬过滤结果，
+      // 由模板列出同一批 answerProducts，可以避免模型把上一轮已淘汰的商品重新写进回答。
       answerText = buildLocalAnswer(message, answerProducts, history, state);
       await streamText(res, answerText);
     }
@@ -163,7 +175,9 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 只有成功生成答案后才写入会话，避免失败请求污染后续多轮上下文。
     appendTurn(session, "user", message);
     appendTurn(session, "assistant", answerText);
-    rememberProducts(session, answerProducts);
+    rememberProducts(session, answerProducts, {
+      updateReference: turnIntent.type !== TURN_INTENTS.REFER
+    });
 
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });

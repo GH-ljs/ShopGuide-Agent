@@ -145,16 +145,29 @@ export function tokenizeForVector(text) {
   return tokens;
 }
 
+function parsePriceNumber(value, unit = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return unit === "万" ? number * 10000 : number;
+}
+
 export function extractPriceConstraint(message) {
   const normalized = String(message || "");
-  const under = normalized.match(/(\d+(?:\.\d+)?)\s*元?\s*(以内|以下|内|之内|以内的|以下的)/);
-  if (under) return { maxPrice: Number(under[1]) };
+  const pricePattern = /(\d+(?:\.\d+)?)\s*(万|元)?/;
 
-  const belowBefore = normalized.match(/(低于|小于|不超过|不高于|不要超过|别超过|不能超过|最多|最高|预算不超过|控制在)\s*(\d+(?:\.\d+)?)\s*元?/);
-  if (belowBefore) return { maxPrice: Number(belowBefore[2]) };
+  const under = normalized.match(new RegExp(`${pricePattern.source}\\s*(以内|以下|内|之内|以内的|以下的|预算)`));
+  if (under) return { maxPrice: parsePriceNumber(under[1], under[2]) };
 
-  const above = normalized.match(/(高于|大于|超过)\s*(\d+(?:\.\d+)?)\s*元?/);
-  if (above) return { minPrice: Number(above[2]) };
+  const belowBefore = normalized.match(new RegExp(`(低于|小于|不超过|不高于|不要超过|别超过|不能超过|最多|最高|预算不超过|控制在|预算)\\s*${pricePattern.source}`));
+  if (belowBefore) return { maxPrice: parsePriceNumber(belowBefore[2], belowBefore[3]) };
+
+  const budgetWan = normalized.match(/(\d+(?:\.\d+)?)\s*万\s*(左右|预算|以内|以下)?/);
+  if (budgetWan && /预算|以内|以下|万/.test(normalized)) {
+    return { maxPrice: parsePriceNumber(budgetWan[1], "万") };
+  }
+
+  const above = normalized.match(new RegExp(`(高于|大于|超过)\\s*${pricePattern.source}`));
+  if (above) return { minPrice: parsePriceNumber(above[2], above[3]) };
 
   return {};
 }
@@ -169,7 +182,7 @@ export function extractNegativeTerms(message) {
       const term = match[1].replace(/^含/, "").trim();
       // “不要超过200”是预算上限，不是要排除“超过200”这个商品词；否则会污染多轮状态，
       // 并和“超过200”最低价解析互相打架，导致 200 元以内商品反而被过滤掉。
-      if (/^(超过|高于|大于|低于|小于|不超过|不高于|不低于|少于|多于)?\s*\d+(?:\.\d+)?\s*元?$/.test(term)) {
+      if (/^(超过|高于|大于|低于|小于|不超过|不高于|不低于|少于|多于)?\s*\d+(?:\.\d+)?\s*(元|万)?$/.test(term)) {
         continue;
       }
       terms.push(term);

@@ -36,7 +36,8 @@ function createEmptySession(conversationId) {
     // state 保存“可复用的购物约束”，turns 保存原始对话；两者分开后，检索不必反复猜历史意图。
     state: createEmptyState(),
     turns: [],
-    lastProducts: []
+    lastProducts: [],
+    referenceProducts: []
   };
 }
 
@@ -57,7 +58,8 @@ export function snapshotSession(session) {
     conversationId: session.conversationId,
     state: session.state,
     turnCount: session.turns.length,
-    lastProductIds: session.lastProducts.map((product) => product.productId)
+    lastProductIds: session.lastProducts.map((product) => product.productId),
+    referenceProductIds: (session.referenceProducts || []).map((product) => product.productId)
   };
 }
 
@@ -94,7 +96,7 @@ function uniqueMerge(current, incoming) {
 }
 
 function hasReusableContext(session) {
-  return Boolean(session.state.category || session.state.itemIntent || session.lastProducts.length > 0);
+  return Boolean(session.state.category || session.state.itemIntent || session.lastProducts.length > 0 || session.referenceProducts?.length > 0);
 }
 
 function isDifferentItemIntent(current, incoming) {
@@ -155,15 +157,28 @@ export function resetSessionStateForNewSearch(session) {
   // 只清空可复用购物约束和上一轮商品，原始 turns 保留给模型理解对话语气，但不再参与硬过滤状态。
   session.state = createEmptyState();
   session.lastProducts = [];
+  session.referenceProducts = [];
 }
 
 function resolveCheaperBudget(session, message) {
-  if (!/(再|更)?便宜|低价|预算低|省钱/.test(message)) return null;
+  if (!/(太贵|贵了|再便宜|更便宜|便宜点|便宜的|便宜些|便宜一点|低价|预算低|省钱)/.test(message)) return null;
+  const prices = session.lastProducts.map((product) => product.basePrice).filter(Number.isFinite).sort((a, b) => a - b);
+  if (prices.length === 0) return null;
+
+  // “便宜点/便宜的”应该明显收窄到上一轮候选的低价区间，而不是只去掉最贵一款。
+  // 取低价半区的上界，可以让 6 个笔记本候选收敛到大约 3 个更便宜的候选。
+  const lowerHalfMaxIndex = Math.max(0, Math.floor((prices.length - 1) / 2));
+  return prices[lowerHalfMaxIndex];
+}
+
+function resolvePricierBudget(session, message) {
+  if (!/(太便宜|便宜了|贵一点|高端一点|好一点|档次高一点)/.test(message)) return null;
   const prices = session.lastProducts.map((product) => product.basePrice).filter(Number.isFinite);
   if (prices.length === 0) return null;
 
-  // "再便宜点"通常表示从上一轮候选里往低价收敛，而不是必须低于最低价。
-  return Math.max(...prices) - 1;
+  // “太便宜了”不是继续降价，而是希望推荐更高价/更高档的候选。
+  // 用上一轮最低价作为下限，既能排除最便宜款，又不会把价格门槛抬得过高导致无结果。
+  return Math.min(...prices) + 1;
 }
 
 export function updateSessionState(session, message) {
@@ -171,6 +186,7 @@ export function updateSessionState(session, message) {
   const itemIntent = inferItemIntent(message);
   const price = extractPriceConstraint(message);
   const cheaperBudget = resolveCheaperBudget(session, message);
+  const pricierBudget = resolvePricierBudget(session, message);
   const excludeTerms = extractNegativeTerms(message);
   const preferences = extractPreferences(message);
 
@@ -179,7 +195,14 @@ export function updateSessionState(session, message) {
   if (itemIntent) session.state.itemIntent = itemIntent;
   if (Number.isFinite(price.maxPrice)) session.state.maxPrice = price.maxPrice;
   if (Number.isFinite(price.minPrice)) session.state.minPrice = price.minPrice;
-  if (Number.isFinite(cheaperBudget)) session.state.maxPrice = Math.max(0, cheaperBudget);
+  if (Number.isFinite(cheaperBudget)) {
+    session.state.maxPrice = Math.max(0, cheaperBudget);
+    session.state.minPrice = null;
+  }
+  if (Number.isFinite(pricierBudget)) {
+    session.state.minPrice = pricierBudget;
+    session.state.maxPrice = null;
+  }
   session.state.excludeTerms = uniqueMerge(session.state.excludeTerms, excludeTerms);
   session.state.preferences = uniqueMerge(session.state.preferences, preferences);
 
@@ -207,17 +230,18 @@ function ordinalToIndex(text) {
 }
 
 export function resolveReferencedProducts(session, message) {
+  const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
   const index = ordinalToIndex(message);
   const shouldExcludeOrdinal = /(不要|去掉|排除|删掉)\s*第/.test(message);
   if (shouldExcludeOrdinal && Number.isInteger(index)) {
     // “不要第一个”属于对上一轮候选的局部排除，只在 lastProducts 里移除对应商品，
     // 而不是把“第一个”当成全库检索条件。
-    return session.lastProducts.filter((_, itemIndex) => itemIndex !== index);
+    return referenceProducts.filter((_, itemIndex) => itemIndex !== index);
   }
-  if (Number.isInteger(index) && index >= 0 && index < session.lastProducts.length) {
-    return [session.lastProducts[index]];
+  if (Number.isInteger(index) && index >= 0 && index < referenceProducts.length) {
+    return [referenceProducts[index]];
   }
-  return session.lastProducts;
+  return referenceProducts;
 }
 
 export function restoreSessionFromHistory(session, rawHistory = [], products = []) {
@@ -232,14 +256,18 @@ export function restoreSessionFromHistory(session, rawHistory = [], products = [
   session.state = createEmptyState();
   session.turns = [];
   session.lastProducts = [];
+  session.referenceProducts = [];
 
   for (const turn of history) {
     // 客户端当前会话历史是多会话切换后的事实来源；当后端内存缺失或与客户端历史不一致时，
-    // 用 user 文本重建可复用约束，用 assistant 商品 ID 重建 lastProducts，避免省略式追问失去参照物。
+    // 用 user 文本重建可复用约束，用 assistant 商品 ID 重建 lastProducts/referenceProducts，避免省略式追问失去参照物。
     if (turn.role === "user") updateSessionState(session, turn.content);
 
     const restoredProducts = restoreProductsByIds(products, turn.productIds);
-    if (restoredProducts.length > 0) rememberProducts(session, restoredProducts);
+    if (restoredProducts.length > 0) {
+      const shouldRefreshReference = restoredProducts.length >= (session.referenceProducts?.length || 0);
+      rememberProducts(session, restoredProducts, { updateReference: shouldRefreshReference });
+    }
 
     appendTurn(session, turn.role, turn.content);
   }
@@ -258,7 +286,7 @@ export function buildRetrievalQuery(session, message, options = {}) {
     : [];
 
   const previousProducts = includeProducts
-    ? session.lastProducts
+    ? (session.referenceProducts?.length ? session.referenceProducts : session.lastProducts)
         .slice(0, 4)
         .map((product) => `${product.title} ${product.category} ${product.subCategory} ${product.basePrice}元`)
     : [];
@@ -293,7 +321,13 @@ export function appendTurn(session, role, content) {
   }
 }
 
-export function rememberProducts(session, products) {
+export function rememberProducts(session, products, options = {}) {
+  const updateReference = options.updateReference !== false;
   session.lastProducts = products;
+  if (updateReference) {
+    // referenceProducts 是“第几个/这几款”追问的候选基准。普通搜索或继续筛选会刷新它；
+    // 单个商品解释这类 refer 回答不会覆盖它，避免用户问完第二款后再问第三款时丢失原始候选列表。
+    session.referenceProducts = products;
+  }
   session.state.lastProductIds = products.map((product) => product.productId);
 }

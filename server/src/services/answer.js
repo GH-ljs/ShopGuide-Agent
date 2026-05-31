@@ -70,6 +70,18 @@ function formatProductListRule(products) {
   ].join("\n");
 }
 
+function buildSafeModelHistory(history = []) {
+  // 历史 assistant 回复里常包含上一轮完整商品清单。它对语气有帮助，但不能继续作为本轮商品事实，
+  // 否则模型在“便宜点/1万预算”这类追问里容易把已被硬过滤排除的旧商品又写回答案。
+  return history
+    .filter((turn) => turn.role === "user")
+    .slice(-3)
+    .map((turn) => ({
+      role: "user",
+      content: turn.content
+    }));
+}
+
 export function buildProductCards(products) {
   // 卡片只暴露客户端展示所需字段，避免把源文件路径、完整 RAG 文本等内部信息塞进聊天流。
   return products.map((product) => ({
@@ -150,10 +162,7 @@ export function buildModelMessages(message, products, history = [], state = {}) 
         .filter(Boolean)
         .join("\n")
     },
-    ...history.map((turn) => ({
-      role: turn.role,
-      content: turn.content
-    })),
+    ...buildSafeModelHistory(history),
     {
       role: "user",
       content: [
