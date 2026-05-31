@@ -59,6 +59,17 @@ function buildProductEvidence(product) {
   };
 }
 
+function formatProductListRule(products) {
+  if (products.length === 0) return "";
+  const titles = products.map((product, index) => `${index + 1}. ${product.title}`).join("\n");
+  // 这段规则把自然语言回答和 products 事件中的卡片强绑定，减少“回答 3 个、展示 4 个”或顺序不一致。
+  return [
+    `本轮商品卡片会展示 ${products.length} 个候选商品，你必须只围绕这 ${products.length} 个候选回答。`,
+    "请按下面顺序逐个说明候选商品，不要跳过、不要新增候选之外的商品：",
+    titles
+  ].join("\n");
+}
+
 export function buildProductCards(products) {
   // 卡片只暴露客户端展示所需字段，避免把源文件路径、完整 RAG 文本等内部信息塞进聊天流。
   return products.map((product) => ({
@@ -118,6 +129,7 @@ export function buildLocalAnswer(message, products, history = [], state = {}) {
 export function buildModelMessages(message, products, history = [], state = {}) {
   const productContext = products.map(buildProductEvidence);
   const constraints = formatStateConstraints(state);
+  const productListRule = formatProductListRule(products);
   const noResultInstruction =
     products.length === 0
       ? "本轮没有检索到商品。你必须明确说明当前商品库没有满足条件的商品，并建议用户放宽条件；禁止推荐任何商品。"
@@ -130,10 +142,13 @@ export function buildModelMessages(message, products, history = [], state = {}) 
         "你是电商智能导购，负责基于商品库做 RAG 推荐。",
         "必须遵守：只使用提供的商品上下文；不得编造不存在的商品、价格、库存、优惠券、销量、功效或活动。",
         "如果候选商品不能完全满足用户条件，要如实说明“更接近需求”或“未完全满足”，不要夸大。",
-        "回答要简洁、中文、自然，优先给出 1-3 个推荐和理由。",
+        "回答要简洁、中文、自然；候选商品有几个，就按顺序回答几个。",
         "不要输出 JSON，不要提到内部字段名或检索分数。",
+        productListRule,
         noResultInstruction
-      ].join("\n")
+      ]
+        .filter(Boolean)
+        .join("\n")
     },
     ...history.map((turn) => ({
       role: turn.role,

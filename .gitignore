@@ -10,7 +10,7 @@ client/.gradle/
 client/.idea/
 client/local.properties
 client/**/build/
-
+client/LOCAL_ANDROID_DEBUG.md
 node_modules/
 dist/
 build/
@@ -28,3 +28,4 @@ yarn-error.log*
 ~$*.docx
 AGENTS.md
 project-requirements.md
+

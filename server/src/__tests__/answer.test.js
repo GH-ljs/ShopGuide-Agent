@@ -47,6 +47,8 @@ function run() {
   const productPrompt = productMessages.map((item) => item.content).join("\n");
   assert(productPrompt.includes(first.productId), "prompt should include product evidence");
   assert(productPrompt.includes("只使用提供的商品上下文"), "prompt should constrain answer to product context");
+  assert(productPrompt.includes("本轮商品卡片会展示 1 个候选商品"), "prompt should bind answer count to product cards");
+  assert(productPrompt.includes("不要跳过、不要新增候选之外的商品"), "prompt should forbid extra or skipped products");
 
   console.log("Answer tests passed.");
 }

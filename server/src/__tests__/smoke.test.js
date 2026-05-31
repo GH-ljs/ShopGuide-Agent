@@ -85,6 +85,7 @@ async function run() {
 
     const productEvent = first.find((item) => item.event === "products");
     assert(productEvent.data.products.every((product) => product.category === "美妆护肤"), "防晒霜查询不应返回非美妆类商品");
+    assert(productEvent.data.products.length <= 4, "chat should keep answer candidates and product cards aligned");
 
     const second = await requestChat(baseUrl, "再便宜点");
     const done = second.find((item) => item.event === "done");

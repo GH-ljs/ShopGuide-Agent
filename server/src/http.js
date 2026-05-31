@@ -19,6 +19,9 @@ import {
 } from "./services/memory.js";
 import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services/retriever.js";
 
+const DEFAULT_CHAT_PRODUCT_LIMIT = 4;
+const MAX_CHAT_PRODUCT_LIMIT = 8;
+
 function sendJson(res, status, payload) {
   res.status(status).json(payload);
 }
@@ -27,6 +30,13 @@ function writeSse(res, event, data) {
   // SSE 的基本格式是 event/data 两行加一个空行；客户端按事件名区分 token、products、done。
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function resolveChatProductLimit(rawLimit) {
+  const limit = Number(rawLimit);
+  if (!Number.isFinite(limit)) return DEFAULT_CHAT_PRODUCT_LIMIT;
+  // 聊天接口允许客户端按展示形态调整卡片数量，但仍设置上限，避免一次返回太多商品让回答失焦。
+  return Math.max(1, Math.min(MAX_CHAT_PRODUCT_LIMIT, Math.floor(limit)));
 }
 
 async function streamText(res, text) {
@@ -92,27 +102,30 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message);
 
-    // RAG 第一步：从可信商品库检索候选商品；后续回答和卡片都只能基于这些候选生成。
-    const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, 4, vectorIndex);
-    const cards = buildProductCards(matchedProducts);
+    const productLimit = resolveChatProductLimit(body.limit);
+    // RAG 第一步：从可信商品库检索候选商品。聊天回答和商品卡片必须使用同一组候选，
+    // 否则会出现“模型讲了 3 个商品，但客户端展示 4 张卡片”的体验不一致。
+    const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, productLimit, vectorIndex);
+    const answerProducts = matchedProducts.slice(0, productLimit);
+    const cards = buildProductCards(answerProducts);
 
     let answerText = "";
     if (config.llmApiKey) {
-      // 有模型 Key 时直接把模型增量 token 转发给客户端，用户能更早看到回复内容。
-      for await (const token of streamModelAnswer(config, message, matchedProducts, history, state)) {
+      // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
+      for await (const token of streamModelAnswer(config, message, answerProducts, history, state)) {
         answerText += token;
         writeSse(res, "token", { content: token });
       }
     } else {
-      // 本地兜底回答不调用外部模型，便于无 Key 环境演示和测试端到端链路。
-      answerText = buildLocalAnswer(message, matchedProducts, history, state);
+      // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
+      answerText = buildLocalAnswer(message, answerProducts, history, state);
       await streamText(res, answerText);
     }
 
     // 只有成功生成答案后才写入会话，避免失败请求污染后续多轮上下文。
     appendTurn(session, "user", message);
     appendTurn(session, "assistant", answerText);
-    rememberProducts(session, matchedProducts);
+    rememberProducts(session, answerProducts);
 
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
