@@ -10,6 +10,7 @@
     "test:embedding": "node src/__tests__/embedding.test.js",
     "test:retrieval": "node src/__tests__/retrieval.test.js",
     "test:retrieval-quality": "node src/__tests__/retrieval-quality.test.js",
+    "test:performance": "node src/__tests__/performance.test.js",
     "test:smoke": "node src/__tests__/smoke.test.js",
     "demo:retrieve": "node src/scripts/demo-retrieve.js",
     "qdrant:health": "node src/scripts/qdrant-health.js",

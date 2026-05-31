@@ -56,7 +56,8 @@ async function chat(baseUrl, conversationId, message, limit = 6) {
     .map((item) => item.data?.content || "")
     .join("");
   const products = events.find((item) => item.event === "products")?.data.products || [];
-  return { events, tokenText, products };
+  const comparison = events.find((item) => item.event === "comparison")?.data.comparison || null;
+  return { events, tokenText, products, comparison };
 }
 
 async function debugRetrieve(baseUrl, conversationId, message, limit = 6) {
@@ -153,6 +154,149 @@ async function run() {
           meta.products.every((product) => budget.products.some((candidate) => candidate.productId === product.productId)),
           "meta question products should come from current budgeted candidates"
         );
+      })
+    );
+
+    results.push(
+      await runCase("结构化对比：第二款和第三款只比较被点名候选", async () => {
+        const conversationId = "memory-compare";
+        const setup = await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本", 6);
+        assert(setup.products.length >= 3, "compare setup should keep at least three candidates");
+
+        const compared = await chat(baseUrl, conversationId, "第二款和第三款对比一下", 6);
+        assert(compared.products.length === 2, "comparison should only return two referenced products");
+        assert(compared.products[0].productId === setup.products[1].productId, "comparison should use original second candidate first");
+        assert(compared.products[1].productId === setup.products[2].productId, "comparison should use original third candidate second");
+        assert(compared.tokenText.includes("对比卡"), "comparison text should stay short and point to comparison card");
+        assert(!compared.tokenText.includes("逐款取舍"), "comparison text should not duplicate comparison card rows");
+        assert(compared.comparison?.columns?.length === 2, "comparison event should expose two compared columns");
+        assert(
+          compared.comparison.columns.map((column) => column.productId).join(",") === compared.products.map((product) => product.productId).join(","),
+          "comparison event columns should align with product cards"
+        );
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "这两款哪个更适合通勤", 6);
+        assert(debug.turnIntent.type === "compare", "follow-up comparison should keep compare intent");
+        assert(debug.retrievalScope === "comparison_candidates", "debug scope should show comparison candidates");
+      })
+    );
+
+    results.push(
+      await runCase("对比决策：用户补充通勤场景后给出明确推荐", async () => {
+        const conversationId = "memory-compare-decision";
+        const setup = await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本", 6);
+        assert(setup.products.length >= 3, "decision setup should keep at least three candidates");
+
+        await chat(baseUrl, conversationId, "第二款和第三款对比一下", 6);
+        const decision = await chat(baseUrl, conversationId, "我主要通勤，偶尔出差，选哪个？", 6);
+
+        assert(decision.products.length === 2, "decision follow-up should keep the compared pair");
+        assert(decision.tokenText.trim().startsWith("明确结论"), "decision answer should put conclusion first");
+        assert(decision.tokenText.includes("明确结论"), "decision answer should give explicit conclusion");
+        assert(decision.tokenText.includes("更推荐第"), "decision answer should name a recommended index");
+        assert(decision.tokenText.includes("通勤"), "decision answer should explain the scenario focus");
+        assert(!decision.tokenText.includes("评价："), "decision answer should not expose raw review snippets");
+        assert(!decision.tokenText.includes("匹配到"), "decision answer should not describe retrieval implementation details");
+      })
+    );
+
+    results.push(
+      await runCase("序号对比：比较1和3、前两款都能解析正确范围", async () => {
+        const conversationId = "memory-compare-ordinal-variants";
+        const setup = await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        assert(setup.products.length >= 3, "ordinal variant setup should keep at least three candidates");
+
+        const firstAndThird = await chat(baseUrl, conversationId, "比较1和3", 6);
+        assert(firstAndThird.products.length === 2, "bare ordinal comparison should return two products");
+        assert(firstAndThird.products[0].productId === setup.products[0].productId, "bare ordinal comparison should use first candidate");
+        assert(firstAndThird.products[1].productId === setup.products[2].productId, "bare ordinal comparison should use third candidate");
+
+        const firstTwo = await chat(baseUrl, conversationId, "比较下前两款", 6);
+        assert(firstTwo.products.length === 2, "front-two comparison should return two products");
+        assert(firstTwo.products[0].productId === setup.products[0].productId, "front-two comparison should use first candidate");
+        assert(firstTwo.products[1].productId === setup.products[1].productId, "front-two comparison should use second candidate");
+      })
+    );
+
+    results.push(
+      await runCase("数字指代：2怎么样、2和3哪个好能解析到候选序号", async () => {
+        const conversationId = "memory-bare-number-reference";
+        const setup = await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本", 6);
+        assert(setup.products.length >= 3, "bare number setup should keep at least three candidates");
+
+        const second = await chat(baseUrl, conversationId, "2怎么样", 6);
+        assert(second.products.length === 1, "bare number refer should return one product");
+        assert(second.products[0].productId === setup.products[1].productId, "bare number refer should resolve product 2");
+
+        const compared = await chat(baseUrl, conversationId, "2和3哪个好", 6);
+        assert(compared.products.length === 2, "bare number comparison should return two products");
+        assert(compared.products[0].productId === setup.products[1].productId, "bare number comparison should use product 2 first");
+        assert(compared.products[1].productId === setup.products[2].productId, "bare number comparison should use product 3 second");
+      })
+    );
+
+    results.push(
+      await runCase("数字多指代：2和3如何应比较两个候选而不是单品解释", async () => {
+        const conversationId = "memory-bare-number-how";
+        const setup = await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        assert(setup.products.length >= 3, "bare number how setup should keep at least three candidates");
+
+        const compared = await chat(baseUrl, conversationId, "2和3如何", 6);
+
+        assert(compared.products.length === 2, "2和3如何 should return two compared products");
+        assert(compared.products[0].productId === setup.products[1].productId, "2和3如何 should use product 2 first");
+        assert(compared.products[1].productId === setup.products[2].productId, "2和3如何 should use product 3 second");
+        assert(compared.comparison?.columns?.length === 2, "2和3如何 should emit comparison component data");
+      })
+    );
+
+    results.push(
+      await runCase("对比后偏好：我想更健康应沿用上一轮对比卡片", async () => {
+        const conversationId = "memory-healthy-decision";
+        const setup = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        assert(setup.products.length >= 5, "healthy decision setup should keep at least five beverage candidates");
+
+        const compared = await chat(baseUrl, conversationId, "比较2和5", 6);
+        assert(compared.products.length === 2, "setup comparison should return two products");
+
+        const healthy = await chat(baseUrl, conversationId, "我想更健康", 6);
+
+        assert(healthy.products.length === 2, "health preference should keep the compared pair instead of all original candidates");
+        assert(healthy.products[0].productId === compared.products[0].productId, "health preference should keep compared product 1");
+        assert(healthy.products[1].productId === compared.products[1].productId, "health preference should keep compared product 2");
+        assert(healthy.comparison?.columns?.length === 2, "health preference should emit comparison component data");
+        assert(healthy.tokenText.includes("明确结论"), "health preference should give a decision answer");
+        assert(healthy.tokenText.includes("健康"), "health preference should explain the health-oriented focus");
+      })
+    );
+
+    results.push(
+      await runCase("商品名指代：对比后追问安热沙这款只返回安热沙", async () => {
+        const conversationId = "memory-name-reference";
+        const setup = await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        const anessa = setup.products.find((product) => product.title.includes("安热沙"));
+        assert(anessa, "setup should include Anessa sunscreen candidate");
+
+        await chat(baseUrl, conversationId, "比较下前两款", 6);
+        const detail = await chat(baseUrl, conversationId, "安热沙这款如何", 6);
+
+        assert(detail.products.length === 1, "name reference should focus on one product");
+        assert(detail.products[0].productId === anessa.productId, "name reference should resolve Anessa from original candidates");
+      })
+    );
+
+    results.push(
+      await runCase("跨需求对比：防晒后能回到笔记本候选做对比", async () => {
+        const conversationId = "memory-cross-need-compare";
+        const notebooks = await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本", 6);
+        assert(notebooks.products.length >= 3, "notebook setup should keep at least three candidates");
+
+        await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        const compared = await chat(baseUrl, conversationId, "刚才笔记本第二款和第三款对比一下", 6);
+
+        assert(compared.products.length === 2, "cross-need comparison should return two products");
+        assert(compared.products[0].productId === notebooks.products[1].productId, "cross-need comparison should restore notebook second candidate");
+        assert(compared.products[1].productId === notebooks.products[2].productId, "cross-need comparison should restore notebook third candidate");
       })
     );
 

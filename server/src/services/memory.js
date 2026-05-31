@@ -15,6 +15,7 @@ const sessions = new Map();
 export const TURN_INTENTS = {
   REFINE: "refine",
   REFER: "refer",
+  COMPARE: "compare",
   NEW_SEARCH: "new_search"
 };
 
@@ -210,7 +211,16 @@ function isDifferentCategory(current, incoming) {
 }
 
 function looksLikeReference(message) {
-  return /(第[一二三四五六七八九十\d]+[个款]?|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第)/.test(message);
+  return /(第[一二三四五六七八九十\d]+[个款]?|这款|这一个|这个|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第|如何|怎么样|具体看看)/.test(message);
+}
+
+function looksLikeComparison(message) {
+  // 对比类问题讨论的是“当前候选之间的差异和取舍”，不是重新从全库找商品。
+  // 单独拆成 compare 意图后，后续回答层可以输出更稳定的结构化对比，而不是普通推荐列表。
+  return (
+    /(对比|比较|区别|差别|不同|哪个更|哪款更|哪一个更|哪个好|哪款好|哪一个好|怎么选|选哪个|更适合|更健康|健康点|优缺点|利弊)/.test(message) ||
+    /([一二两三四五六七八九十]|\d+)\s*(?:和|跟|与|、|,|，)\s*([一二两三四五六七八九十]|\d+)\s*(?:如何|怎么样|呢)?/.test(message)
+  );
 }
 
 function looksLikeCandidateMetaQuestion(message) {
@@ -240,6 +250,10 @@ export function classifyTurnIntent(session, message) {
     preferences: extractPreferences(message)
   };
   const hasContext = hasReusableContext(session);
+
+  if (hasContext && looksLikeComparison(message)) {
+    return { type: TURN_INTENTS.COMPARE, parsed, reason: "用户想比较当前候选商品的差异和适用场景" };
+  }
 
   if (hasContext && (looksLikeReference(message) || looksLikeCandidateMetaQuestion(message))) {
     return { type: TURN_INTENTS.REFER, parsed, reason: "用户提到了上一轮商品或候选序号" };
@@ -285,7 +299,7 @@ export function selectNeedForTurn(session, turnIntent) {
     .reverse()
     .find((need) => needMatchesParsed(need, parsed));
 
-  if (matchingNeed && (turnIntent.type === TURN_INTENTS.REFER || turnIntent.type === TURN_INTENTS.REFINE)) {
+  if (matchingNeed && (turnIntent.type === TURN_INTENTS.REFER || turnIntent.type === TURN_INTENTS.REFINE || turnIntent.type === TURN_INTENTS.COMPARE)) {
     // “刚才那个笔记本第三款”这类跨需求回看，要先把 active need 切回笔记本，
     // 再让 resolveReferencedProducts 从该 need 的 referenceProducts 中取序号。
     activateNeed(session, matchingNeed);
@@ -373,9 +387,68 @@ function ordinalToIndex(text) {
   return map[match[1]] ?? null;
 }
 
+function tokenToOrdinalIndex(token) {
+  if (/^\d+$/.test(token)) return Number(token) - 1;
+  return ordinalToIndex(`第${token}款`);
+}
+
+function looksLikeBareOrdinalReference(text) {
+  // “2 怎么样”“2和3哪个好”“选2”这类说法没有“第”，但在已有候选上下文里通常就是商品序号。
+  // 这里只在带有追问/选择语义时启用，避免把预算、容量、型号里的普通数字误当成商品序号。
+  return /(^|\s)([一二两三四五六七八九十]|\d+)\s*(个|款)?\s*(怎么样|如何|呢|好不好|可以吗|能买吗|值得吗|选|哪个好|哪款好|更好|更适合|对比|比较)|(?:选|要|看看|比较|对比)\s*([一二两三四五六七八九十]|\d+)/.test(
+    text
+  );
+}
+
+function ordinalIndexes(text) {
+  const rawText = String(text || "");
+  const prefixedMatches = [...rawText.matchAll(/第\s*([一二两三四五六七八九十]|\d+)\s*[个款]?/g)];
+  const prefixedIndexes = prefixedMatches.map((match) => tokenToOrdinalIndex(match[1]));
+
+  const bareIndexes = [];
+  const comparisonPhrase = rawText.match(/(?:比较|对比)?\s*([一二两三四五六七八九十]|\d+)\s*(?:和|跟|与|、|,|，)\s*([一二两三四五六七八九十]|\d+)\s*(?:哪个好|哪款好|更好|更适合|对比|比较)?/);
+  if (comparisonPhrase) {
+    for (const token of comparisonPhrase.slice(1, 3)) {
+      bareIndexes.push(tokenToOrdinalIndex(token));
+    }
+  }
+  if (looksLikeBareOrdinalReference(rawText)) {
+    const bareSingleMatches = [...rawText.matchAll(/(?:^|\s|选|要|看看|比较|对比)([一二两三四五六七八九十]|\d+)(?:\s*(?:个|款))?(?=\s|$|怎么样|如何|呢|好不好|可以吗|能买吗|值得吗|和|跟|与|、|,|，|哪个|哪款|更好|更适合|对比|比较)/g)];
+    bareIndexes.push(...bareSingleMatches.map((match) => tokenToOrdinalIndex(match[1])));
+  }
+
+  const indexes = [...prefixedIndexes, ...bareIndexes]
+    .filter((index) => Number.isInteger(index) && index >= 0);
+  return [...new Set(indexes)];
+}
+
+function normalizeForMatch(text) {
+  return String(text || "").toLowerCase().replace(/\s+/g, "");
+}
+
+function resolveProductsByName(referenceProducts, message) {
+  const normalizedMessage = normalizeForMatch(message);
+  if (!normalizedMessage || referenceProducts.length === 0) return [];
+
+  return referenceProducts.filter((product) => {
+    const candidates = [
+      product.brand,
+      product.title,
+      ...(product.title || "").split(/\s+/),
+      ...(product.brand || "").split(/\s+/)
+    ]
+      .map(normalizeForMatch)
+      .filter((item) => item.length >= 2);
+
+    // 商品名/品牌指代是“安热沙这款”“苹果这款”的核心参照。只在上一轮候选里匹配，
+    // 不把它当成全库搜索词，避免用户想看某个候选详情时又重新推荐一整组商品。
+    return candidates.some((candidate) => normalizedMessage.includes(candidate) || candidate.includes(normalizedMessage));
+  });
+}
+
 export function resolveReferencedProducts(session, message) {
   const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
-  const index = ordinalToIndex(message);
+  const [index] = ordinalIndexes(message);
   const shouldExcludeOrdinal = /(不要|去掉|排除|删掉)\s*第/.test(message);
   if (shouldExcludeOrdinal && Number.isInteger(index)) {
     // “不要第一个”属于对上一轮候选的局部排除，只在 lastProducts 里移除对应商品，
@@ -385,7 +458,49 @@ export function resolveReferencedProducts(session, message) {
   if (Number.isInteger(index) && index >= 0 && index < referenceProducts.length) {
     return [referenceProducts[index]];
   }
+  const nameMatchedProducts = resolveProductsByName(referenceProducts, message);
+  if (nameMatchedProducts.length > 0) return nameMatchedProducts.slice(0, 1);
   return referenceProducts;
+}
+
+export function resolveComparisonProducts(session, message) {
+  const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
+  if (/(前两|前2|前二)/.test(message)) {
+    return referenceProducts.slice(0, 2);
+  }
+  const indexes = ordinalIndexes(message);
+  if (indexes.length > 0) {
+    // “第二款和第三款对比”应只拿被点名的商品，否则文字对比和卡片数量会不一致。
+    // 如果用户只点了一个序号，就补上当前候选中前几个商品，保证仍能形成可比较对象。
+    const selected = indexes.map((index) => referenceProducts[index]).filter(Boolean);
+    if (selected.length >= 2) return selected;
+    if (selected.length === 1) {
+      return [selected[0], ...referenceProducts.filter((product) => product.productId !== selected[0].productId).slice(0, 2)];
+    }
+    return [];
+  }
+
+  if (/(这两|两款|两个|这两个)/.test(message) && session.lastProducts?.length >= 2) {
+    // 连续对比里用户常说“这两款哪个更适合通勤”，此时参照物应是上一轮已经收窄出的对比集合，
+    // 而不是最初推荐列表的前三个，否则会把未参与上一轮对比的商品重新带进来。
+    return session.lastProducts.slice(0, 2);
+  }
+
+  if (/(选哪个|哪个好|哪款好|哪个更|哪款更|更适合|更推荐|更健康|健康点)/.test(message) && session.lastProducts?.length >= 2 && session.lastProducts.length < referenceProducts.length) {
+    // 用户在对比之后补充“我主要通勤，选哪个”时，虽然没有说“这两款”，真实参照物仍是上一轮对比集合。
+    // 这里优先沿用更窄的 lastProducts，让决策建议只在刚比较过的商品之间产生。
+    return session.lastProducts;
+  }
+
+  const nameMatchedProducts = resolveProductsByName(referenceProducts, message);
+  if (nameMatchedProducts.length > 0) {
+    return nameMatchedProducts.length >= 2
+      ? nameMatchedProducts.slice(0, 3)
+      : [nameMatchedProducts[0], ...referenceProducts.filter((product) => product.productId !== nameMatchedProducts[0].productId).slice(0, 2)];
+  }
+
+  // 未点名具体序号时，默认比较当前候选列表的前 3 个，既能覆盖“这几款怎么选”，又避免一次比较过多导致回答冗长。
+  return referenceProducts.slice(0, 3);
 }
 
 export function restoreSessionFromHistory(session, rawHistory = [], products = []) {

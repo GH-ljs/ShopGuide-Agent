@@ -24,9 +24,12 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shopguide.agent.model.ChatMessage
+import com.shopguide.agent.model.ComparisonCard
 import com.shopguide.agent.model.MessageRole
 import com.shopguide.agent.model.ProductCard
 
@@ -46,12 +49,18 @@ fun MessageBubble(
             modifier = Modifier.fillMaxWidth(if (isUser) 0.76f else 0.96f),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
-            if (message.text.isNotBlank()) {
+            val shouldShowTextBubble = message.text.isNotBlank() && (isUser || message.comparison == null)
+            if (shouldShowTextBubble) {
                 if (isUser) {
                     UserBubble(text = message.text)
                 } else {
                     AssistantBubble(text = message.text)
                 }
+            }
+
+            if (!isUser && message.comparison != null) {
+                if (shouldShowTextBubble) Spacer(modifier = Modifier.height(10.dp))
+                ComparisonCardView(comparison = message.comparison)
             }
 
             if (message.products.isNotEmpty()) {
@@ -67,6 +76,101 @@ fun MessageBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ComparisonCardView(comparison: ComparisonCard) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFF)),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Color(0xFFD7E3FF)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = comparison.title.ifBlank { "商品对比" },
+                color = Color(0xFF2F6FED),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+
+            if (comparison.conclusion.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = comparison.conclusion,
+                    color = Color(0xFF1F2328),
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp)
+                )
+            }
+
+            if (comparison.columns.isNotEmpty() && comparison.rows.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                ComparisonHeader(comparison = comparison)
+                comparison.rows.forEach { row ->
+                    ComparisonRowView(comparison = comparison, label = row.label) { productId ->
+                        row.values.firstOrNull { it.productId == productId }?.value.orEmpty()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComparisonHeader(comparison: ComparisonCard) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            modifier = Modifier.weight(0.78f),
+            text = "维度",
+            color = Color(0xFF5F6673),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        comparison.columns.forEach { column ->
+            val isRecommended = column.productId == comparison.recommendedProductId
+            Text(
+                modifier = Modifier.weight(1f),
+                text = listOf(column.label, column.brand).filter { it.isNotBlank() }.joinToString("\n"),
+                color = if (isRecommended) Color(0xFF2F6FED) else Color(0xFF1F2328),
+                style = MaterialTheme.typography.labelSmall.copy(lineHeight = 14.sp),
+                fontWeight = if (isRecommended) FontWeight.SemiBold else FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun ComparisonRowView(
+    comparison: ComparisonCard,
+    label: String,
+    valueFor: (String) -> String
+) {
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            modifier = Modifier.weight(0.78f),
+            text = label,
+            color = Color(0xFF5F6673),
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        comparison.columns.forEach { column ->
+            val isRecommended = column.productId == comparison.recommendedProductId
+            Text(
+                modifier = Modifier.weight(1f),
+                text = valueFor(column.productId).ifBlank { "-" },
+                color = if (isRecommended) Color(0xFF1F4DB8) else Color(0xFF1F2328),
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
+                textAlign = TextAlign.Center,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -129,31 +233,45 @@ private fun AssistantBubble(text: String) {
 }
 
 private fun renderAssistantMarkdown(text: String): AnnotatedString {
+    val normalized = normalizeAssistantText(text)
     return buildAnnotatedString {
         var index = 0
 
-        while (index < text.length) {
-            val start = text.indexOf("**", startIndex = index)
+        while (index < normalized.length) {
+            val start = normalized.indexOf("**", startIndex = index)
             if (start < 0) {
-                append(text.substring(index))
+                append(normalized.substring(index))
                 break
             }
 
-            val end = text.indexOf("**", startIndex = start + 2)
+            val end = normalized.indexOf("**", startIndex = start + 2)
             if (end < 0) {
-                append(text.substring(index))
+                append(normalized.substring(index).replace("**", ""))
                 break
             }
 
-            append(text.substring(index, start))
+            append(normalized.substring(index, start))
 
             // 后端/模型可能用 Markdown 的 **商品名** 表示重点；Compose Text 不会自动解析，
             // 所以在客户端把这类短标记转换成真正的粗体，避免把 ** 暴露给用户。
             pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-            append(text.substring(start + 2, end))
+            append(normalized.substring(start + 2, end))
             pop()
 
             index = end + 2
         }
     }
+}
+
+private fun normalizeAssistantText(text: String): String {
+    // 模型和后端模板可能混用 Markdown：**粗体**、* 列表、- 列表、单星号强调。
+    // 客户端统一做一次轻量清洗，避免把 *、- 这类格式符号直接暴露在聊天气泡里。
+    return text
+        .lines()
+        .joinToString("\n") { line ->
+            line
+                .replace(Regex("^\\s*[-*]\\s+"), "• ")
+                .replace(Regex("(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)"), "$1")
+        }
+        .replace(Regex("\\n{3,}"), "\n\n")
 }

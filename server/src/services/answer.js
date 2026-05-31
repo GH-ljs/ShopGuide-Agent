@@ -7,8 +7,178 @@ function shortDescription(product) {
   return text.length > 90 ? `${text.slice(0, 90)}...` : text;
 }
 
+function skuSummary(product) {
+  const sku = product.skus?.[0];
+  if (!sku?.properties) return "";
+  return Object.entries(sku.properties)
+    .slice(0, 2)
+    .map(([key, value]) => `${key}${value}`)
+    .join("、");
+}
+
+function productFeatureTags(product) {
+  const evidence = productEvidenceText(product);
+  const tagRules = [
+    ["通勤", /(通勤|办公|商务|生产力|便携|轻薄|轻量)/],
+    ["出差", /(出差|便携|轻薄|轻量|续航|商务)/],
+    ["预算", /(高性价比|预算|入门|标准版|价格|省)/],
+    ["性能", /(高性能|性能|生产力|Pro|处理器|芯片|内存)/],
+    ["户外", /(户外|防水|防汗|耐用|运动)/],
+    ["肤感", /(清爽|控油|油皮|敏感肌|舒缓|轻薄)/],
+    ["健康", /(健康|天然|无糖|0糖|零糖|低糖|无添加|茶|低负担)/]
+  ];
+  return tagRules.filter(([, pattern]) => pattern.test(evidence)).map(([tag]) => tag);
+}
+
+function compactFeatureText(product) {
+  const tags = productFeatureTags(product).slice(0, 3);
+  if (tags.length > 0) return tags.join("、");
+  const sku = skuSummary(product);
+  if (sku) return sku;
+  return `${product.category}/${product.subCategory}`;
+}
+
+function inferComparisonFocus(message, state = {}) {
+  const preferenceText = `${message} ${(state.preferences || []).join(" ")}`;
+  if (/(便宜|价格|预算|省钱|性价比)/.test(preferenceText)) return "价格";
+  if (/(通勤|办公|上班|出差|便携|轻薄|轻量)/.test(preferenceText)) return "通勤";
+  if (/(户外|运动|防水|防汗|续航|耐用)/.test(preferenceText)) return "场景";
+  if (/(油皮|控油|清爽|肤感|敏感肌)/.test(preferenceText)) return "肤感";
+  if (/(健康|天然|无糖|0糖|零糖|低糖|无添加|低负担)/.test(preferenceText)) return "健康";
+  return "";
+}
+
+function productEvidenceText(product) {
+  return [
+    product.title,
+    product.brand,
+    product.category,
+    product.subCategory,
+    product.marketingDescription,
+    ...(product.userReviews || []).map((item) => item.content),
+    ...(product.officialFaq || []).flatMap((item) => [item.question, item.answer]),
+    ...(product.skus || []).flatMap((sku) => Object.values(sku.properties || {}))
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function matchedKeywords(product, keywords) {
+  const evidence = productEvidenceText(product);
+  return keywords.filter((keyword) => evidence.includes(keyword));
+}
+
+function pickRecommendedProduct(message, products, state = {}) {
+  const focus = inferComparisonFocus(message, state);
+  if (focus === "价格") {
+    const ranked = [...products].sort((a, b) => a.basePrice - b.basePrice);
+    return { product: ranked[0], focus, matched: ["价格更低"], score: 1 };
+  }
+  const keywordGroups = {
+    通勤: ["通勤", "办公", "出差", "便携", "轻薄", "轻量", "续航"],
+    场景: ["户外", "防水", "防汗", "续航", "耐用"],
+    肤感: ["油皮", "控油", "清爽", "敏感肌", "舒缓"],
+    健康: ["健康", "天然", "无糖", "0糖", "零糖", "低糖", "无添加", "茶", "低负担"]
+  };
+  const keywords = keywordGroups[focus] || [];
+  if (keywords.length === 0) return null;
+
+  const ranked = products
+    .map((product) => {
+      const matched = matchedKeywords(product, keywords);
+      return { product, focus, matched, score: matched.length };
+    })
+    .sort((a, b) => b.score - a.score || a.product.basePrice - b.product.basePrice);
+  return ranked[0]?.score > 0 ? ranked[0] : null;
+}
+
+function buildDecisionSummary(message, products, state = {}) {
+  const recommendation = pickRecommendedProduct(message, products, state);
+  if (!recommendation) {
+    return "明确结论：这几款没有明显压倒性的单一选择。你可以再补一句最看重什么，例如预算、通勤、续航、控油或户外，我再按这个维度给你排序。";
+  }
+
+  const recommendedIndex = products.findIndex((product) => product.productId === recommendation.product.productId) + 1;
+  const alternatives = products.filter((product) => product.productId !== recommendation.product.productId);
+  const focusText = recommendation.focus || "当前偏好";
+  const matchedText = recommendation.matched.slice(0, 3).join("、");
+  const evidenceText =
+    recommendation.focus === "价格"
+      ? `它在这几款里价格更低，参考价 ${recommendation.product.basePrice} 元，更适合控制预算。`
+      : `它的商品信息更贴近${focusText}场景，关键点是${matchedText || compactFeatureText(recommendation.product)}。`;
+  const cheaperAlternative = alternatives
+    .filter((product) => product.basePrice < recommendation.product.basePrice)
+    .sort((a, b) => a.basePrice - b.basePrice)[0];
+  const alternativeText =
+    recommendation.focus !== "价格" && cheaperAlternative
+      ? `如果你更在意价格，第 ${products.findIndex((product) => product.productId === cheaperAlternative.productId) + 1} 款更省预算，可作为备选。`
+      : "";
+
+  // 决策结论只基于候选商品已有文本和结构化价格，不把模型猜测升级成事实。
+  // 备选理由也必须和结构化价格一致：只有真的存在更便宜的候选时，才说“更在意价格可选它”。
+  // 这样“我主要通勤，偶尔出差，选哪个”会得到明确推荐，同时仍保留另一款在不同偏好下的价值。
+  return [
+    `明确结论：更推荐第 ${recommendedIndex} 款 **${recommendation.product.title}**。`,
+    `选择理由：${evidenceText}`,
+    alternativeText
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function stripMarkdown(text) {
+  return String(text || "").replace(/\*\*/g, "");
+}
+
 function imageUrlFor(product) {
   return `/api/products/${encodeURIComponent(product.productId)}/image`;
+}
+
+export function buildComparisonPayload(message, products, state = {}) {
+  if (state.answerMode !== "compare" || products.length < 2) return null;
+
+  const decisionSummary = stripMarkdown(buildDecisionSummary(message, products, state));
+  const recommendationMatch = decisionSummary.match(/更推荐第\s*(\d+)\s*款/);
+  const recommendedIndex = recommendationMatch ? Number(recommendationMatch[1]) - 1 : -1;
+  const recommendedProduct = products[recommendedIndex] || null;
+  const rows = [
+    {
+      label: "价格",
+      values: products.map((product) => ({
+        productId: product.productId,
+        value: `${product.basePrice} 元`
+      }))
+    },
+    {
+      label: "取舍点",
+      values: products.map((product) => ({
+        productId: product.productId,
+        value: compactFeatureText(product)
+      }))
+    },
+    {
+      label: "适合场景",
+      values: products.map((product) => ({
+        productId: product.productId,
+        value: productFeatureTags(product).slice(0, 3).join("、") || `${product.category}/${product.subCategory}`
+      }))
+    }
+  ];
+
+  // comparison 事件是给客户端渲染“对比组件”的结构化协议：文本回答负责自然语言解释，
+  // 这里负责稳定字段和商品 ID 绑定，避免 Android 从自然语言里再猜价格、推荐项或对比维度。
+  return {
+    title: "商品对比",
+    conclusion: decisionSummary,
+    recommendedProductId: recommendedProduct?.productId || "",
+    columns: products.map((product, index) => ({
+      productId: product.productId,
+      label: `第 ${index + 1} 款`,
+      title: product.title,
+      brand: product.brand
+    })),
+    rows
+  };
 }
 
 function formatStateConstraints(state = {}) {
@@ -61,6 +231,45 @@ function buildProductEvidence(product) {
     faq_evidence: faqEvidence,
     review_evidence: reviewEvidence
   };
+}
+
+function buildComparisonAnswer(message, products, state = {}) {
+  if (products.length === 0) {
+    return buildNoResultAnswer(message);
+  }
+  if (products.length === 1) {
+    const product = products[0];
+    return [
+      `你提到的是 ${product.title}，参考价 ${product.basePrice} 元。`,
+      `从商品数据看，它的主要特点是：${compactFeatureText(product)}`,
+      "如果你想做对比，可以再指定另一款，例如“和第二款对比”。"
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const decisionSummary = buildDecisionSummary(message, products, state);
+  // 对比详情已经通过 comparison SSE 事件结构化返回给客户端。文本流只保留一句兜底结论，
+  // 避免 App 同时展示长文本对比和对比卡，造成用户看到两份重复信息。
+  return `${decisionSummary}\n\n我已把价格、取舍点和适合场景整理在下方对比卡里。`;
+}
+
+function buildReferencedProductAnswer(message, products) {
+  if (products.length !== 1) return null;
+  const product = products[0];
+  const sku = skuSummary(product);
+
+  // 指代单品追问的目标是“解释这款”，不是重新推荐一组候选。
+  // 单独模板可以避免回复里出现“又筛出 3 个/1 个候选”的口吻，让多轮导购更像真实销售沟通。
+  return [
+    `你问的是 **${product.title}**。`,
+    `价格：${product.basePrice} 元`,
+    sku ? `规格：${sku}` : "",
+    `特点：${compactFeatureText(product)}`,
+    "建议：如果你想，我可以继续从预算、使用场景或和其他款对比的角度帮你判断。"
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function formatProductListRule(products) {
@@ -124,6 +333,13 @@ export function buildLocalAnswer(message, products, history = [], state = {}) {
   if (products.length === 0) {
     return buildNoResultAnswer(message, state);
   }
+  if (state.answerMode === "compare") {
+    return buildComparisonAnswer(message, products, state);
+  }
+  if (state.answerMode === "refer") {
+    const referencedAnswer = buildReferencedProductAnswer(message, products);
+    if (referencedAnswer) return referencedAnswer;
+  }
 
   const hasHistory = history.length > 0;
   const intro = hasHistory
@@ -147,6 +363,7 @@ export function buildModelMessages(message, products, history = [], state = {}) 
   const constraints = formatStateConstraints(state);
   const memorySummary = formatMemorySummary(state);
   const productListRule = formatProductListRule(products);
+  const isCompareMode = state.answerMode === "compare";
   const noResultInstruction =
     products.length === 0
       ? "本轮没有检索到商品。你必须明确说明当前商品库没有满足条件的商品，并建议用户放宽条件；禁止推荐任何商品。"
@@ -160,6 +377,9 @@ export function buildModelMessages(message, products, history = [], state = {}) 
         "必须遵守：只使用提供的商品上下文；不得编造不存在的商品、价格、库存、优惠券、销量、功效或活动。",
         "如果候选商品不能完全满足用户条件，要如实说明“更接近需求”或“未完全满足”，不要夸大。",
         "回答要简洁、中文、自然；候选商品有几个，就按顺序回答几个。",
+        isCompareMode
+          ? "本轮是商品对比/决策问题。请用“主要差异、逐款优缺点、适合谁、明确结论”的结构回答；必须给出更推荐哪一款，并说明依据；只能比较候选商品，不要新增商品。"
+          : "",
         "不要输出 JSON，不要提到内部字段名或检索分数。",
         productListRule,
         noResultInstruction

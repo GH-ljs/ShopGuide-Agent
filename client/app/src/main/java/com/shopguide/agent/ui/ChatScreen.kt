@@ -239,6 +239,16 @@ fun ChatScreen() {
                             }
                         }
                     },
+                    onComparison = { comparison ->
+                        scope.launch {
+                            pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
+                            // comparison 事件是后端生成的结构化对比结果，和文本、商品卡片使用同一批候选。
+                            // 挂到当前助手消息后，UI 可以渲染对比组件，不需要从自然语言回答里猜表格数据。
+                            updateAssistantMessage(messages, assistantMessageId) { old ->
+                                old.copy(comparison = comparison)
+                            }
+                        }
+                    },
                     onProducts = { products ->
                         scope.launch {
                             pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
@@ -297,7 +307,7 @@ fun ChatScreen() {
         }
     }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.products?.size) {
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.products?.size, messages.lastOrNull()?.comparison) {
         ConversationStore.saveMessages(context, messages)
 
         if (messages.isEmpty()) return@LaunchedEffect

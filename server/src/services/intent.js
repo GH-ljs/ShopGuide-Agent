@@ -13,6 +13,7 @@ function normalizeString(value) {
 }
 
 function normalizeNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -73,8 +74,8 @@ function buildIntentParserMessages(session, message, fallbackIntent) {
         "你是电商导购 Agent 的意图解析器，只输出 JSON，不输出解释。",
         "你的任务是理解用户本轮话的真实含义，例如“太便宜了”表示想提高价位，“便宜点”表示想降低价位，“1万预算”表示 max_price=10000。",
         "你只负责解析，不负责推荐商品；商品是否符合条件必须交给后端检索和硬过滤。",
-        "字段：turn_type 只能是 new_search/refine/refer；category、item_type 使用已有商品库里的中文类目和商品类型；price_direction 只能是 lower/higher/none。",
-        "如果用户只是问第几款或刚才那款，turn_type=refer；如果换了新品类或新商品类型，turn_type=new_search；如果在上一轮需求上加预算、偏好、排除条件，turn_type=refine。",
+        "字段：turn_type 只能是 new_search/refine/refer/compare；category、item_type 使用已有商品库里的中文类目和商品类型；price_direction 只能是 lower/higher/none。",
+        "如果用户只是问第几款或刚才那款，turn_type=refer；如果在比较当前候选的区别、优缺点、哪个更适合，turn_type=compare；如果换了新品类或新商品类型，turn_type=new_search；如果在上一轮需求上加预算、偏好、排除条件，turn_type=refine。",
         "输出 JSON 结构：{\"turn_type\":\"refine\",\"category\":\"\",\"item_type\":\"\",\"max_price\":null,\"min_price\":null,\"price_direction\":\"none\",\"negative_terms\":[],\"preferences\":[],\"refer_index\":null,\"reason\":\"\"}"
       ].join("\n")
     },

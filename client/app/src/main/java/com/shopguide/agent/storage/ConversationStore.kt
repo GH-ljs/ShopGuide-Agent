@@ -2,6 +2,10 @@ package com.shopguide.agent.storage
 
 import android.content.Context
 import com.shopguide.agent.model.ChatMessage
+import com.shopguide.agent.model.ComparisonCard
+import com.shopguide.agent.model.ComparisonColumn
+import com.shopguide.agent.model.ComparisonRow
+import com.shopguide.agent.model.ComparisonValue
 import com.shopguide.agent.model.MessageRole
 import com.shopguide.agent.model.ProductCard
 import org.json.JSONArray
@@ -216,7 +220,8 @@ object ConversationStore {
             id = optInt("id"),
             role = MessageRole.valueOf(optString("role", MessageRole.Assistant.name)),
             text = optString("text"),
-            products = products
+            products = products,
+            comparison = optJSONObject("comparison")?.toComparisonCard()
         )
     }
 
@@ -241,6 +246,89 @@ object ConversationStore {
             .put("role", role.name)
             .put("text", text)
             .put("products", productsJson)
+            .put("comparison", comparison?.toJson())
+    }
+
+    private fun JSONObject.toComparisonCard(): ComparisonCard {
+        val columnsJson = optJSONArray("columns") ?: JSONArray()
+        val rowsJson = optJSONArray("rows") ?: JSONArray()
+        return ComparisonCard(
+            title = optString("title"),
+            conclusion = optString("conclusion"),
+            recommendedProductId = optString("recommendedProductId"),
+            columns = buildList {
+                for (index in 0 until columnsJson.length()) {
+                    val item = columnsJson.getJSONObject(index)
+                    add(
+                        ComparisonColumn(
+                            productId = item.optString("productId"),
+                            label = item.optString("label"),
+                            title = item.optString("title"),
+                            brand = item.optString("brand")
+                        )
+                    )
+                }
+            },
+            rows = buildList {
+                for (rowIndex in 0 until rowsJson.length()) {
+                    val row = rowsJson.getJSONObject(rowIndex)
+                    val valuesJson = row.optJSONArray("values") ?: JSONArray()
+                    add(
+                        ComparisonRow(
+                            label = row.optString("label"),
+                            values = buildList {
+                                for (valueIndex in 0 until valuesJson.length()) {
+                                    val item = valuesJson.getJSONObject(valueIndex)
+                                    add(
+                                        ComparisonValue(
+                                            productId = item.optString("productId"),
+                                            value = item.optString("value")
+                                        )
+                                    )
+                                }
+                            }
+                        )
+                    )
+                }
+            }
+        )
+    }
+
+    private fun ComparisonCard.toJson(): JSONObject {
+        val columnsJson = JSONArray()
+        columns.forEach { column ->
+            columnsJson.put(
+                JSONObject()
+                    .put("productId", column.productId)
+                    .put("label", column.label)
+                    .put("title", column.title)
+                    .put("brand", column.brand)
+            )
+        }
+
+        val rowsJson = JSONArray()
+        rows.forEach { row ->
+            val valuesJson = JSONArray()
+            row.values.forEach { value ->
+                valuesJson.put(
+                    JSONObject()
+                        .put("productId", value.productId)
+                        .put("value", value.value)
+                )
+            }
+            rowsJson.put(
+                JSONObject()
+                    .put("label", row.label)
+                    .put("values", valuesJson)
+            )
+        }
+
+        return JSONObject()
+            .put("title", title)
+            .put("conclusion", conclusion)
+            .put("recommendedProductId", recommendedProductId)
+            .put("columns", columnsJson)
+            .put("rows", rowsJson)
     }
 
     private data class StoredSession(

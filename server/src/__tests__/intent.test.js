@@ -21,6 +21,13 @@ async function run() {
   assert(pricierIntent.source === "rules", "price direction fallback should stay rule-based without key");
   assert(pricierIntent.type === TURN_INTENTS.REFINE, "太便宜了 should continue the current conversation");
 
+  const compareIntent = await parseTurnIntent(config, getSession("intent-test"), "第二款和第三款对比一下");
+  assert(compareIntent.source === "rules", "compare fallback should stay rule-based without key");
+  assert(compareIntent.type === TURN_INTENTS.COMPARE, "comparison question should use compare intent");
+
+  const nameReferIntent = await parseTurnIntent(config, getSession("intent-test"), "安热沙这款如何");
+  assert(nameReferIntent.type === TURN_INTENTS.REFER, "named product follow-up should refer to previous candidates");
+
   const mockConfig = {
     llmApiKey: "mock-key",
     llmProvider: "ark",
@@ -57,6 +64,32 @@ async function run() {
     assert(llmIntent.parsed.itemIntent?.itemType === "笔记本", "LLM item_type should normalize to catalog item intent");
     assert(!Number.isFinite(llmIntent.parsed.price.maxPrice), "LLM should not invent a hard budget without price signal");
     assert(llmIntent.parsed.negativeTerms.length === 0, "LLM should not invent negative filters without negative signal");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "refine",
+                category: "",
+                item_type: "",
+                max_price: null,
+                min_price: null,
+                price_direction: "none",
+                negative_terms: [],
+                preferences: []
+              })
+            }
+          }
+        ]
+      })
+    });
+    const nullPriceIntent = await parseTurnIntent(mockConfig, llmSession, "预算多少合适");
+    assert(nullPriceIntent.parsed.price.maxPrice !== 0, "LLM null max_price should not become 0");
+    assert(nullPriceIntent.parsed.price.minPrice !== 0, "LLM null min_price should not become 0");
   } finally {
     globalThis.fetch = originalFetch;
   }

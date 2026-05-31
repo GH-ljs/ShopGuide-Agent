@@ -2,6 +2,10 @@ package com.shopguide.agent.network
 
 import com.shopguide.agent.model.ProductCard
 import com.shopguide.agent.model.ChatMessage
+import com.shopguide.agent.model.ComparisonCard
+import com.shopguide.agent.model.ComparisonColumn
+import com.shopguide.agent.model.ComparisonRow
+import com.shopguide.agent.model.ComparisonValue
 import com.shopguide.agent.model.MessageRole
 import org.json.JSONArray
 import org.json.JSONObject
@@ -18,7 +22,7 @@ data class ChatApiError(
 )
 
 /**
- * 调用后端 /api/chat，并解析 token/products/done/error 四类 SSE 事件。
+ * 调用后端 /api/chat，并解析 token/meta/comparison/products/done/error 六类 SSE 事件。
  *
  * 这里先用 Android 标准库 HttpURLConnection，目的是减少 MVP 阶段的外部依赖；
  * 后续如果要加重试、拦截器、统一日志，可以再替换为 OkHttp/Retrofit。
@@ -29,6 +33,7 @@ object ChatApi {
         message: String,
         history: List<ChatMessage>,
         onToken: (String) -> Unit,
+        onComparison: (ComparisonCard) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
         onError: (ChatApiError) -> Unit
@@ -82,7 +87,7 @@ object ChatApi {
 
                         line.startsWith("data:") -> {
                             val data = line.removePrefix("data:").trim()
-                            handleEvent(eventName, data, onToken, onProducts, onDone, onError)
+                            handleEvent(eventName, data, onToken, onComparison, onProducts, onDone, onError)
                         }
                     }
                 }
@@ -105,6 +110,7 @@ object ChatApi {
         eventName: String,
         data: String,
         onToken: (String) -> Unit,
+        onComparison: (ComparisonCard) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
         onError: (ChatApiError) -> Unit
@@ -114,6 +120,11 @@ object ChatApi {
                 // token 是模型文本增量，直接追加到当前助手消息即可形成“逐字出现”的体验。
                 val content = JSONObject(data).optString("content")
                 if (content.isNotEmpty()) onToken(content)
+            }
+
+            "meta" -> {
+                // meta 是后端性能评测/缓存命中信息。当前聊天 UI 不直接展示它，
+                // 保留解析分支可以避免新增 SSE 事件时被误认为未知错误。
             }
 
             "products" -> {
@@ -137,6 +148,13 @@ object ChatApi {
                     }
                 }
                 onProducts(products)
+            }
+
+            "comparison" -> {
+                // comparison 是后端已经绑定商品 ID 的结构化对比数据，客户端只负责展示；
+                // 不从 token 文本里二次解析，避免自然语言变化导致 UI 卡片和回答不一致。
+                val comparisonJson = JSONObject(data).optJSONObject("comparison") ?: return
+                onComparison(comparisonJson.toComparisonCard())
             }
 
             "done" -> onDone()
@@ -183,6 +201,51 @@ object ChatApi {
         if (path.startsWith("http://") || path.startsWith("https://")) return path
         if (path.startsWith("/")) return "${ApiConfig.BASE_URL}$path"
         return path
+    }
+
+    private fun JSONObject.toComparisonCard(): ComparisonCard {
+        val columnsJson = optJSONArray("columns") ?: JSONArray()
+        val rowsJson = optJSONArray("rows") ?: JSONArray()
+        return ComparisonCard(
+            title = optString("title"),
+            conclusion = optString("conclusion"),
+            recommendedProductId = optString("recommendedProductId"),
+            columns = buildList {
+                for (index in 0 until columnsJson.length()) {
+                    val item = columnsJson.getJSONObject(index)
+                    add(
+                        ComparisonColumn(
+                            productId = item.optString("productId"),
+                            label = item.optString("label"),
+                            title = item.optString("title"),
+                            brand = item.optString("brand")
+                        )
+                    )
+                }
+            },
+            rows = buildList {
+                for (rowIndex in 0 until rowsJson.length()) {
+                    val row = rowsJson.getJSONObject(rowIndex)
+                    val valuesJson = row.optJSONArray("values") ?: JSONArray()
+                    add(
+                        ComparisonRow(
+                            label = row.optString("label"),
+                            values = buildList {
+                                for (valueIndex in 0 until valuesJson.length()) {
+                                    val item = valuesJson.getJSONObject(valueIndex)
+                                    add(
+                                        ComparisonValue(
+                                            productId = item.optString("productId"),
+                                            value = item.optString("value")
+                                        )
+                                    )
+                                }
+                            }
+                        )
+                    )
+                }
+            }
+        )
     }
 
     private fun List<ChatMessage>.toHistoryJson(): JSONArray {

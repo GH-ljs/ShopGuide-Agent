@@ -10,7 +10,8 @@
 - 使用本地向量检索或 Qdrant 检索商品。
 - 构造严格基于商品上下文的 RAG Prompt。
 - 调用 DeepSeek 或 Doubao/Ark 聊天模型生成回答。
-- 通过 SSE 返回 `token`、`products`、`done` 事件。
+- 通过 SSE 返回 `token`、`meta`、`comparison`、`products`、`done` 事件。
+- 对热门新搜索问题做内存缓存，降低重复检索和模型生成成本。
 - 提供商品列表、商品详情、商品图片和检索调试接口。
 
 ## 目录说明
@@ -25,6 +26,7 @@ server/
 │  │  └─ loader.js                # 商品 JSON 加载和标准化
 │  ├─ services/
 │  │  ├─ answer.js                # 商品卡片、详情、本地回答、模型 Prompt
+│  │  ├─ hotCache.js              # 热门查询缓存和性能统计
 │  │  ├─ llm.js                   # OpenAI-compatible 流式模型调用
 │  │  ├─ memory.js                # conversationId 会话记忆和导购状态
 │  │  └─ retriever.js             # RAG 检索编排、过滤、排序、调试信息
@@ -44,6 +46,7 @@ server/
 │  └─ __tests__/
 │     ├─ answer.test.js           # 回答和 Prompt 防幻觉测试
 │     ├─ embedding.test.js        # embedding 测试
+│     ├─ performance.test.js      # 热门查询缓存和首 token 指标测试
 │     ├─ retrieval.test.js        # 基础检索冒烟测试
 │     ├─ retrieval-quality.test.js# RAG 检索质量基线测试
 │     └─ smoke.test.js            # 后端端到端 smoke 测试
@@ -121,6 +124,16 @@ ARK_API_KEY=你的火山方舟 API Key
 ```
 
 `EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关。可以用 Ark 做 embedding，同时用 DeepSeek 做聊天生成。
+
+### 热门查询缓存
+
+```env
+HOT_QUERY_CACHE_ENABLED=true
+HOT_QUERY_CACHE_MAX_ENTRIES=80
+HOT_QUERY_CACHE_TTL_MS=600000
+```
+
+缓存只用于“不依赖上下文的新搜索请求”，例如“推荐一款适合油皮的防晒霜”这类热门问题；“第二款怎么样”“2 和 3 对比”这类多轮指代不会走缓存，避免把旧会话上下文答乱。
 
 ## 本轮 RAG 优化
 
@@ -231,10 +244,18 @@ SSE 事件：
 
 ```text
 event: token     # 流式文本
+event: meta      # 性能/缓存调试信息，客户端可忽略
+event: comparison # 结构化对比卡
 event: products  # 商品卡片
 event: done      # 本轮完成
 event: error     # 错误
 ```
+
+`meta` 目前包含缓存命中和首 token 耗时等调试信息，可用于 4.4 工程质量与性能优化的演示和自动化测试。
+
+### GET `/api/performance`
+
+返回热门查询缓存状态和统计，例如 `size / hits / misses / writes / ttlMs`。该接口面向开发和评测，不建议直接暴露在普通客户端 UI 中。
 
 `error` 事件会返回结构化错误码：
 

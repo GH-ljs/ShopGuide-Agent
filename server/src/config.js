@@ -48,5 +48,8 @@ export const config = {
   arkModel: process.env.ARK_MODEL || "ep-20260514111645-lmgt2",
   deepseekApiKey,
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
-  deepseekModel: process.env.DEEPSEEK_MODEL || "deepseek-chat"
+  deepseekModel: process.env.DEEPSEEK_MODEL || "deepseek-chat",
+  hotQueryCacheEnabled: process.env.HOT_QUERY_CACHE_ENABLED !== "false",
+  hotQueryCacheMaxEntries: Number(process.env.HOT_QUERY_CACHE_MAX_ENTRIES || 80),
+  hotQueryCacheTtlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000)
 };

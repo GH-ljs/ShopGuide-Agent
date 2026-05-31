@@ -4,19 +4,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import express from "express";
-import { buildLocalAnswer, buildProductCards, buildProductDetail } from "./services/answer.js";
+import { buildComparisonPayload, buildLocalAnswer, buildProductCards, buildProductDetail } from "./services/answer.js";
 import { buildError, ERROR_CODES } from "./utils/errors.js";
 import { streamModelAnswer } from "./services/llm.js";
 import { parseTurnIntent } from "./services/intent.js";
+import { buildHotQueryCacheKey, createHotQueryCache } from "./services/hotCache.js";
 import {
   appendTurn,
   buildConversationMemorySummary,
   buildRetrievalQuery,
+  classifyTurnIntent,
   getRecentTurns,
   getSession,
   rememberProducts,
   resetSession,
   resetSessionStateForNewSearch,
+  resolveComparisonProducts,
   resolveReferencedProducts,
   selectNeedForTurn,
   restoreSessionFromHistory,
@@ -28,16 +31,21 @@ import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services
 
 const DEFAULT_CHAT_PRODUCT_LIMIT = 4;
 const MAX_CHAT_PRODUCT_LIMIT = 8;
+const hotQueryCache = createHotQueryCache({
+  maxEntries: Number(process.env.HOT_QUERY_CACHE_MAX_ENTRIES || 80),
+  ttlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000)
+});
 
 function shouldUseDeterministicAnswer(config, turnIntent, state, message) {
   if (!config.llmApiKey) return true;
+  if (turnIntent.type === TURN_INTENTS.REFER || turnIntent.type === TURN_INTENTS.COMPARE) return true;
   if (turnIntent.source === "llm") return false;
   const hasPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
   const isPriceFollowUp = /(便宜|贵|预算|以内|以下|不超过|不要超过|最多|控制在|\d+\s*万)/.test(message);
 
   // 预算和价格方向属于后端可验证的硬约束，优先使用确定性回答可以保证“文字列出的商品”和
   // products 事件里的卡片完全一致，避免模型被历史回答里的旧候选污染后继续展示不符合条件的商品。
-  return turnIntent.type === TURN_INTENTS.REFER || hasPriceBoundary || isPriceFollowUp;
+  return hasPriceBoundary || isPriceFollowUp;
 }
 
 function sendJson(res, status, payload) {
@@ -67,10 +75,15 @@ function parsedRetrievalInput(turnIntent) {
   };
 }
 
-async function streamText(res, text) {
+async function streamText(res, text, onFirstToken = null) {
   // 没有真实模型 Key 时，用本地答案模拟逐 token 输出，让客户端仍能验证流式渲染闭环。
   const parts = text.split(/(\s+|\n)/).filter(Boolean);
+  let firstTokenWritten = false;
   for (const part of parts) {
+    if (!firstTokenWritten) {
+      firstTokenWritten = true;
+      onFirstToken?.();
+    }
     writeSse(res, "token", { content: part });
     await new Promise((resolve) => setTimeout(resolve, 18));
   }
@@ -120,6 +133,21 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
   }
 
   writeSseHeaders(res);
+  const requestStartedAt = Date.now();
+  let firstTokenMs = null;
+  const productLimit = resolveChatProductLimit(body.limit);
+
+  function markFirstToken(meta = {}) {
+    if (firstTokenMs !== null) return;
+    firstTokenMs = Date.now() - requestStartedAt;
+    // meta 事件是给性能评测和调试用的轻量协议，客户端可忽略。
+    // 它不承载商品事实，因此不会影响 RAG 回答和商品卡片的一致性。
+    writeSse(res, "meta", {
+      type: "first_token",
+      firstTokenMs,
+      ...meta
+    });
+  }
 
   try {
     const conversationId = String(body.conversationId || "default").trim() || "default";
@@ -127,6 +155,45 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 多会话列表在客户端持久化历史；后端上下文只在内存中。若后端刚重启或该会话未命中内存，
     // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
     restoreSessionFromHistory(session, body.history, products);
+    const ruleIntent = classifyTurnIntent(session, message);
+    const canTryHotCache = config.hotQueryCacheEnabled && ruleIntent.type === TURN_INTENTS.NEW_SEARCH;
+    const preParseCacheKey = canTryHotCache
+      ? buildHotQueryCacheKey({ turnIntent: ruleIntent, state: {}, message, limit: productLimit })
+      : "";
+    const cached = preParseCacheKey ? hotQueryCache.get(preParseCacheKey, products) : null;
+
+    if (cached) {
+      resetSessionStateForNewSearch(session);
+      const state = updateSessionState(session, message, ruleIntent.parsed);
+      const answerProducts = cached.products.slice(0, productLimit);
+      const cards = buildProductCards(answerProducts);
+
+      writeSse(res, "meta", {
+        type: "cache",
+        cacheHit: true,
+        cacheScope: "hot_query",
+        firstTokenTargetMs: 1000
+      });
+      await streamText(res, cached.answerText, () => markFirstToken({ cacheHit: true }));
+
+      appendTurn(session, "user", message);
+      appendTurn(session, "assistant", cached.answerText);
+      rememberProducts(session, answerProducts, { updateReference: true });
+
+      writeSse(res, "products", { products: cards });
+      writeSse(res, "done", { ok: true, conversationId, cacheHit: true });
+      return;
+    }
+
+    if (preParseCacheKey) {
+      writeSse(res, "meta", {
+        type: "cache",
+        cacheHit: false,
+        cacheScope: "hot_query",
+        firstTokenTargetMs: 1000
+      });
+    }
+
     const turnIntent = await parseTurnIntent(config, session, message);
     if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
       resetSessionStateForNewSearch(session);
@@ -146,11 +213,12 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
     });
     const retrievalProducts =
-      turnIntent.type === TURN_INTENTS.REFER
-        ? resolveReferencedProducts(session, message)
-        : products;
+      turnIntent.type === TURN_INTENTS.COMPARE
+        ? resolveComparisonProducts(session, message)
+        : turnIntent.type === TURN_INTENTS.REFER
+          ? resolveReferencedProducts(session, message)
+          : products;
 
-    const productLimit = resolveChatProductLimit(body.limit);
     // RAG 第一步：从可信商品库检索候选商品。聊天回答和商品卡片必须使用同一组候选，
     // 否则会出现“模型讲了 3 个商品，但客户端展示 4 张卡片”的体验不一致。
     let matchedProducts;
@@ -159,14 +227,20 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       // 这样既能在“不要超过200”时从全库补找低价商品，也能在“第二个怎么样”时不突然跳到新商品。
       // retrievalQuery 会拼入摘要和历史文本，只适合做语义排序；硬约束必须来自结构化解析结果和 state。
       // 否则“预算不低于 171 元”这类摘要文字可能被二次正则误读成预算上限，导致候选被错误过滤空。
-      matchedProducts = await retrieveProductsWithState(
-        retrievalProducts,
-        retrievalQuery,
-        state,
-        productLimit,
-        vectorIndex,
-        parsedRetrievalInput(turnIntent)
-      );
+      if (turnIntent.type === TURN_INTENTS.COMPARE) {
+        // 对比问题的可信边界是“上一轮候选/用户点名的序号商品”，不是全库重新召回。
+        // 这里直接使用结构化记忆里的候选，避免向量排序把未被点名的商品插进对比答案和卡片。
+        matchedProducts = retrievalProducts.slice(0, productLimit);
+      } else {
+        matchedProducts = await retrieveProductsWithState(
+          retrievalProducts,
+          retrievalQuery,
+          state,
+          productLimit,
+          vectorIndex,
+          parsedRetrievalInput(turnIntent)
+        );
+      }
     } catch (error) {
       // 检索层异常单独标成 RETRIEVAL_ERROR，方便区分 Qdrant/Embedding/索引问题和模型生成问题。
       throw Object.assign(new Error(error.message), {
@@ -174,8 +248,11 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
         userMessage: "商品检索暂时不可用"
       });
     }
+    const answerMode =
+      turnIntent.type === TURN_INTENTS.COMPARE ? "compare" : turnIntent.type === TURN_INTENTS.REFER ? "refer" : "";
     const answerProducts = matchedProducts.slice(0, productLimit);
     const cards = buildProductCards(answerProducts);
+    const finalAnswerState = { ...answerState, answerMode };
 
     let answerText = "";
     if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
@@ -183,6 +260,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       try {
         for await (const token of streamModelAnswer(config, message, answerProducts, history, answerState)) {
           answerText += token;
+          markFirstToken({ cacheHit: false });
           writeSse(res, "token", { content: token });
         }
       } catch (error) {
@@ -196,16 +274,33 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
       // 价格/预算/指代追问使用后端确定性回答：这类问题的正确性主要取决于硬过滤结果，
       // 由模板列出同一批 answerProducts，可以避免模型把上一轮已淘汰的商品重新写进回答。
-      answerText = buildLocalAnswer(message, answerProducts, history, answerState);
-      await streamText(res, answerText);
+      answerText = buildLocalAnswer(message, answerProducts, history, finalAnswerState);
+      await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
+    }
+
+    if (config.hotQueryCacheEnabled && turnIntent.type === TURN_INTENTS.NEW_SEARCH && answerMode === "") {
+      const cacheKey = buildHotQueryCacheKey({ turnIntent, state, message, limit: productLimit });
+      // 只在成功生成完整回答后写缓存。这样缓存里永远是“文本、卡片、结构化约束已对齐”的结果，
+      // 不会把检索异常、半截模型输出或失败响应复用给后续用户。
+      hotQueryCache.set(cacheKey, {
+        answerText,
+        products: answerProducts
+      });
     }
 
     // 只有成功生成答案后才写入会话，避免失败请求污染后续多轮上下文。
     appendTurn(session, "user", message);
     appendTurn(session, "assistant", answerText);
     rememberProducts(session, answerProducts, {
-      updateReference: turnIntent.type !== TURN_INTENTS.REFER
+      updateReference: turnIntent.type !== TURN_INTENTS.REFER && turnIntent.type !== TURN_INTENTS.COMPARE
     });
+
+    const comparison = buildComparisonPayload(message, answerProducts, finalAnswerState);
+    if (comparison) {
+      // comparison 是比自然语言更稳定的结构化对比结果，供客户端渲染对比组件；
+      // 它必须和 products 使用同一批 answerProducts，保证文字、对比表和卡片三者不打架。
+      writeSse(res, "comparison", { comparison });
+    }
 
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
@@ -257,7 +352,18 @@ function installRoutes(app, { config, products, vectorIndex }) {
       embeddingDimension: config.embeddingDimension,
       modelEnabled: Boolean(config.llmApiKey),
       llmProvider: config.llmProvider,
-      llmModel: config.llmProvider === "deepseek" ? config.deepseekModel : config.arkModel
+      llmModel: config.llmProvider === "deepseek" ? config.deepseekModel : config.arkModel,
+      hotQueryCache: config.hotQueryCacheEnabled ? hotQueryCache.snapshot() : { enabled: false }
+    });
+  });
+
+  app.get("/api/performance", (req, res) => {
+    sendJson(res, 200, {
+      ok: true,
+      hotQueryCache: {
+        enabled: config.hotQueryCacheEnabled,
+        ...hotQueryCache.snapshot()
+      }
     });
   });
 
@@ -307,25 +413,47 @@ function installRoutes(app, { config, products, vectorIndex }) {
         includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
       });
       const retrievalProducts =
-        turnIntent.type === TURN_INTENTS.REFER
-          ? resolveReferencedProducts(session, message)
-          : products;
+        turnIntent.type === TURN_INTENTS.COMPARE
+          ? resolveComparisonProducts(session, message)
+          : turnIntent.type === TURN_INTENTS.REFER
+            ? resolveReferencedProducts(session, message)
+            : products;
+      const debugLimit = Number(req.body?.limit || 4);
       // 调试接口返回解析结果、候选数量和向量分数，方便定位“为什么推荐了这些商品”。
-      const debug = await retrieveProductsWithDebug(
-        retrievalProducts,
-        retrievalQuery,
-        state,
-        Number(req.body?.limit || 4),
-        vectorIndex,
-        parsedRetrievalInput(turnIntent)
-      );
+      // compare 意图不走全库向量召回，而是展示从结构化记忆里解析出的对比候选，便于确认“第几款”有没有选对。
+      const debug =
+        turnIntent.type === TURN_INTENTS.COMPARE
+          ? {
+              products: retrievalProducts.slice(0, debugLimit),
+              counts: {
+                totalProducts: products.length,
+                filteredCandidates: retrievalProducts.length,
+                returned: retrievalProducts.slice(0, debugLimit).length
+              },
+              parsed: parsedRetrievalInput(turnIntent),
+              usedVectorStore: false,
+              note: "compare intent reuses referenced candidates instead of full-catalog retrieval"
+            }
+          : await retrieveProductsWithDebug(
+              retrievalProducts,
+              retrievalQuery,
+              state,
+              debugLimit,
+              vectorIndex,
+              parsedRetrievalInput(turnIntent)
+            );
 
       return sendJson(res, 200, {
         ok: true,
         conversationId,
         includeMemory,
         turnIntent,
-        retrievalScope: turnIntent.type === TURN_INTENTS.REFER ? "last_products" : "full_catalog",
+        retrievalScope:
+          turnIntent.type === TURN_INTENTS.COMPARE
+            ? "comparison_candidates"
+            : turnIntent.type === TURN_INTENTS.REFER
+              ? "last_products"
+              : "full_catalog",
         session: snapshotSession(session),
         originalMessage: message,
         retrievalQuery,
