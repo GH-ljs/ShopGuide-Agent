@@ -11,6 +11,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
@@ -19,6 +20,7 @@ fun InputBar(
     value: String,
     enabled: Boolean,
     onValueChange: (String) -> Unit,
+    onInputFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit
 ) {
     // 输入栏不保存自己的状态，而是由 ChatScreen 传入 value/onValueChange，保持 Compose 的单向数据流。
@@ -33,7 +35,10 @@ fun InputBar(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         OutlinedTextField(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                // 由父组件记录输入框焦点，比单纯读键盘高度更可靠；很多机型键盘动画期间 inset 更新会滞后。
+                .onFocusChanged { state -> onInputFocusChanged(state.isFocused) },
             value = value,
             onValueChange = onValueChange,
             enabled = enabled,

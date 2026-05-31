@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,8 +54,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
 import com.shopguide.agent.model.ProductDetail
@@ -73,6 +77,8 @@ private const val LOADING_TEXT = "正在检索商品并生成回答..."
 @Composable
 fun ChatScreen() {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -96,6 +102,16 @@ fun ChatScreen() {
     var pendingInstantScrollToBottom by remember { mutableStateOf(true) }
     var pendingSendScrollToBottom by remember { mutableStateOf(false) }
     var pendingStreamScrollToBottom by remember { mutableStateOf(false) }
+    var isInputFocused by remember { mutableStateOf(false) }
+
+    fun hideKeyboardIfInputFocused(): Boolean {
+        if (!isInputFocused) return false
+        // 清除输入框焦点并主动通知键盘收起；返回 true 表示本次点击已被“收键盘”消费。
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+        isInputFocused = false
+        return true
+    }
 
     // mutableStateListOf 是 Compose 可观察列表；替换某条消息对象时，聊天列表会自动刷新。
     val messages = remember {
@@ -343,13 +359,21 @@ fun ChatScreen() {
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    // 键盘打开时，点聊天区域先收键盘，不触发下面的卡片跳转等二级动作。
+                    .pointerInput(isInputFocused) {
+                        detectTapGestures(onTap = { hideKeyboardIfInputFocused() })
+                    }
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
-                        onProductClick = { product -> selectedProductId = product.productId }
+                        onProductClick = { product ->
+                            if (!hideKeyboardIfInputFocused()) {
+                                selectedProductId = product.productId
+                            }
+                        }
                     )
                 }
             }
@@ -363,6 +387,7 @@ fun ChatScreen() {
                 value = input,
                 enabled = !isStreaming,
                 onValueChange = { input = it },
+                onInputFocusChanged = { focused -> isInputFocused = focused },
                 onSend = { sendMessage(input) }
             )
         }
