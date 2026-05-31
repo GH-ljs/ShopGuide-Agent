@@ -105,16 +105,33 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const productLimit = resolveChatProductLimit(body.limit);
     // RAG 第一步：从可信商品库检索候选商品。聊天回答和商品卡片必须使用同一组候选，
     // 否则会出现“模型讲了 3 个商品，但客户端展示 4 张卡片”的体验不一致。
-    const matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, productLimit, vectorIndex);
+    let matchedProducts;
+    try {
+      matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, productLimit, vectorIndex);
+    } catch (error) {
+      // 检索层异常单独标成 RETRIEVAL_ERROR，方便区分 Qdrant/Embedding/索引问题和模型生成问题。
+      throw Object.assign(new Error(error.message), {
+        code: ERROR_CODES.RETRIEVAL_ERROR,
+        userMessage: "商品检索暂时不可用"
+      });
+    }
     const answerProducts = matchedProducts.slice(0, productLimit);
     const cards = buildProductCards(answerProducts);
 
     let answerText = "";
     if (config.llmApiKey) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
-      for await (const token of streamModelAnswer(config, message, answerProducts, history, state)) {
-        answerText += token;
-        writeSse(res, "token", { content: token });
+      try {
+        for await (const token of streamModelAnswer(config, message, answerProducts, history, state)) {
+          answerText += token;
+          writeSse(res, "token", { content: token });
+        }
+      } catch (error) {
+        // 模型调用失败单独标成 MODEL_ERROR，常见原因是 API Key、模型名、权限或网络问题。
+        throw Object.assign(new Error(error.message), {
+          code: ERROR_CODES.MODEL_ERROR,
+          userMessage: "AI 生成暂时不可用"
+        });
       }
     } else {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
@@ -132,10 +149,12 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     writeSse(res, "done", { ok: true, conversationId });
   } catch (error) {
     console.error("[/api/chat] failed:", error);
+    const code = error.code || ERROR_CODES.INTERNAL_ERROR;
+    const message = error.userMessage || "服务内部错误";
     writeSse(
       res,
       "error",
-      buildError(ERROR_CODES.MODEL_ERROR, "模型服务或检索服务暂时不可用", error.message)
+      buildError(code, message, error.message)
     );
   } finally {
     res.end();
@@ -168,8 +187,14 @@ function installRoutes(app, { config, products, vectorIndex }) {
     sendJson(res, 200, {
       ok: true,
       productCount: products.length,
+      vectorStore: config.vectorStore,
+      qdrantUrl: config.qdrantUrl,
+      qdrantCollection: config.qdrantCollection,
+      embeddingProvider: config.embeddingProvider,
+      embeddingDimension: config.embeddingDimension,
       modelEnabled: Boolean(config.llmApiKey),
-      llmProvider: config.llmProvider
+      llmProvider: config.llmProvider,
+      llmModel: config.llmProvider === "deepseek" ? config.deepseekModel : config.arkModel
     });
   });
 

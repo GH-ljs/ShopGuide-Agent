@@ -58,9 +58,9 @@ import androidx.compose.ui.unit.dp
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
 import com.shopguide.agent.model.ProductDetail
+import com.shopguide.agent.network.ChatApiError
 import com.shopguide.agent.network.ChatApi
 import com.shopguide.agent.network.ConversationApi
-import com.shopguide.agent.network.HealthApi
 import com.shopguide.agent.network.ProductDetailApi
 import com.shopguide.agent.storage.ConversationSummary
 import com.shopguide.agent.storage.ConversationStore
@@ -80,7 +80,6 @@ fun ChatScreen() {
     // conversationId 同时影响后端记忆和本地历史。把它持久化后，重开 App 才能继续同一段对话。
     var conversationId by remember { mutableStateOf(ConversationStore.loadConversationId(context)) }
     var input by remember { mutableStateOf("") }
-    var isBackendHealthy by remember { mutableStateOf<Boolean?>(null) }
     var isStreaming by remember { mutableStateOf(false) }
     var selectedProductId by remember { mutableStateOf<String?>(null) }
     var detail by remember { mutableStateOf<ProductDetail?>(null) }
@@ -216,10 +215,10 @@ fun ChatScreen() {
                     onDone = {
                         scope.launch { isStreaming = false }
                     },
-                    onError = { message ->
+                    onError = { error ->
                         scope.launch {
                             updateAssistantMessage(messages, assistantMessageId) { old ->
-                                old.copy(text = friendlyErrorMessage(message, old.text))
+                                old.copy(text = friendlyErrorMessage(error, old.text))
                             }
                             isStreaming = false
                         }
@@ -229,13 +228,6 @@ fun ChatScreen() {
 
             // 兜底收尾：如果后端没有发 done，也避免输入栏一直卡在“生成中”。
             isStreaming = false
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        // 首次进入页面检查后端是否可用；网络 IO 放到后台线程，避免阻塞 UI。
-        isBackendHealthy = withContext(Dispatchers.IO) {
-            runCatching { HealthApi.checkHealth() }.getOrDefault(false)
         }
     }
 
@@ -342,7 +334,6 @@ fun ChatScreen() {
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             Header(
-                isBackendHealthy = isBackendHealthy,
                 isStreaming = isStreaming,
                 onOpenMenu = { scope.launch { drawerState.open() } }
             )
@@ -919,14 +910,21 @@ private fun nextMessageId(messages: List<ChatMessage>): Int {
     return (messages.maxOfOrNull { it.id } ?: 0) + 1
 }
 
-private fun friendlyErrorMessage(error: String, currentText: String): String {
+private fun friendlyErrorMessage(error: ChatApiError, currentText: String): String {
     val prefix = if (currentText == LOADING_TEXT || currentText.isBlank()) {
-        "这次请求没有成功。请确认后端服务、模型 Key 和网络都可用，然后再试一次。"
+        error.userMessage
     } else {
         currentText
     }
 
-    return "$prefix\n\n错误信息：$error"
+    val debugLine = if (error.details.isBlank()) {
+        "错误码：${error.code}"
+    } else {
+        "错误码：${error.code}\n详情：${error.details}"
+    }
+
+    // 普通用户先看到自然语言；错误码保留给开发调试，便于区分网络、检索、模型和服务内部异常。
+    return "$prefix\n\n$debugLine"
 }
 
 private fun isNearConversationBottom(listState: LazyListState): Boolean {

@@ -32,9 +32,24 @@ data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","de
 INVALID_JSON
 VALIDATION_ERROR
 NOT_FOUND
+RETRIEVAL_ERROR
 MODEL_ERROR
 INTERNAL_ERROR
 ```
+
+错误码含义：
+
+| 错误码 | 常见原因 | 客户端用户提示 |
+| --- | --- | --- |
+| `NETWORK_ERROR` | Android 客户端连不上后端，例如后端没启动、地址错误 | 无法连接后端服务，请确认服务已启动。 |
+| `VALIDATION_ERROR` | 请求参数缺失，例如 `message` 为空 | 请输入你的购物需求。 |
+| `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant 未启动、Embedding/向量索引异常 | 商品检索暂时不可用，请稍后再试。 |
+| `MODEL_ERROR` | 模型调用失败，例如 API Key、模型名、权限、余额或网络问题 | AI 生成暂时不可用，请稍后再试。 |
+| `NOT_FOUND` | 商品或图片不存在 | 没有找到对应资源。 |
+| `INVALID_JSON` | 请求体不是合法 JSON | 请求格式异常，请稍后再试。 |
+| `INTERNAL_ERROR` | 未预期服务端异常 | 服务暂时不可用，请稍后再试。 |
+
+说明：`NETWORK_ERROR` 是客户端本地归类，后端不会返回这个错误码，因为客户端连不上后端时收不到后端响应。
 
 ## GET /api/health
 
@@ -46,8 +61,14 @@ INTERNAL_ERROR
 {
   "ok": true,
   "productCount": 100,
-  "modelEnabled": false,
-  "llmProvider": "deepseek"
+  "vectorStore": "qdrant",
+  "qdrantUrl": "http://localhost:6333",
+  "qdrantCollection": "shopguide_products_ark",
+  "embeddingProvider": "ark",
+  "embeddingDimension": 1024,
+  "modelEnabled": true,
+  "llmProvider": "deepseek",
+  "llmModel": "deepseek-chat"
 }
 ```
 
@@ -55,8 +76,16 @@ INTERNAL_ERROR
 
 - `ok`: 服务是否正常。
 - `productCount`: 已加载商品数量。
+- `vectorStore`: 当前向量检索模式，例如 `local` 或 `qdrant`。
+- `qdrantUrl`: Qdrant 地址。
+- `qdrantCollection`: Qdrant collection 名称。
+- `embeddingProvider`: 当前 embedding provider，例如 `local` 或 `ark`。
+- `embeddingDimension`: 当前 embedding 向量维度。
 - `modelEnabled`: 是否已配置聊天模型 API Key。
 - `llmProvider`: 当前聊天模型 provider，例如 `ark` 或 `deepseek`。
+- `llmModel`: 当前聊天模型名称或 endpoint id。
+
+注意：`/api/health` 是开发排障接口，普通客户端 UI 不直接展示 Qdrant、Embedding、LLM 等内部组件状态。
 
 ## GET /api/products
 

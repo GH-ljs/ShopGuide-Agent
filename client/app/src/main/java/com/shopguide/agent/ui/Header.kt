@@ -21,11 +21,10 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun Header(
-    isBackendHealthy: Boolean?,
     isStreaming: Boolean,
     onOpenMenu: () -> Unit
 ) {
-    // 顶部栏压缩成单行：左侧菜单、中间标题、右侧状态点，避免占用聊天首屏空间。
+    // 顶部栏只保留普通用户需要的导航入口和标题；服务细节状态放到错误提示/调试接口里。
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -47,11 +46,6 @@ fun Header(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFF111318)
-        )
-
-        ConnectionDot(
-            modifier = Modifier.align(Alignment.CenterEnd),
-            isBackendHealthy = isBackendHealthy
         )
     }
 }
@@ -76,25 +70,5 @@ private fun TwoLineMenuIcon() {
             strokeWidth = stroke,
             cap = StrokeCap.Round
         )
-    }
-}
-
-@Composable
-private fun ConnectionDot(
-    modifier: Modifier,
-    isBackendHealthy: Boolean?
-) {
-    val color = when (isBackendHealthy) {
-        true -> Color(0xFF16A34A)
-        false -> Color(0xFFDC2626)
-        null -> Color(0xFF9CA3AF)
-    }
-
-    Canvas(
-        modifier = modifier
-            .padding(end = 18.dp)
-            .size(10.dp)
-    ) {
-        drawCircle(color = color)
     }
 }

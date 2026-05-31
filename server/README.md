@@ -197,7 +197,7 @@ rankScore = 向量相似度 + 偏好命中加权 + 商品字段匹配
 
 ### GET `/api/health`
 
-健康检查，返回商品数量和模型状态。
+开发排障用健康检查，返回商品数量、向量库、Embedding 和聊天模型配置概览。普通客户端 UI 不直接展示 Qdrant、Embedding、LLM 等内部组件状态。
 
 ### GET `/api/products`
 
@@ -235,6 +235,19 @@ event: products  # 商品卡片
 event: done      # 本轮完成
 event: error     # 错误
 ```
+
+`error` 事件会返回结构化错误码：
+
+| 错误码 | 代表含义 |
+| --- | --- |
+| `VALIDATION_ERROR` | 请求参数不合法，例如 `message` 为空 |
+| `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant/Embedding/向量索引异常 |
+| `MODEL_ERROR` | 模型生成失败，例如 API Key、模型名、权限或网络问题 |
+| `NOT_FOUND` | 商品、图片或接口不存在 |
+| `INVALID_JSON` | 请求体不是合法 JSON |
+| `INTERNAL_ERROR` | 未预期服务端异常 |
+
+Android 客户端会额外把“连不上后端”的情况归类为 `NETWORK_ERROR`，因为这类错误发生时收不到后端响应。
 
 ### POST `/api/debug/retrieve`
 

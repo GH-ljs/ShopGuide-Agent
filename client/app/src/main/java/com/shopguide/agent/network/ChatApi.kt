@@ -8,6 +8,12 @@ import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
+data class ChatApiError(
+    val code: String,
+    val userMessage: String,
+    val details: String = ""
+)
+
 /**
  * 调用后端 /api/chat，并解析 token/products/done/error 四类 SSE 事件。
  *
@@ -21,7 +27,7 @@ object ChatApi {
         onToken: (String) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
-        onError: (String) -> Unit
+        onError: (ChatApiError) -> Unit
     ) {
         val url = URL("${ApiConfig.BASE_URL}/api/chat")
         val connection = url.openConnection() as HttpURLConnection
@@ -47,7 +53,13 @@ object ChatApi {
             }
 
             if (connection.responseCode !in 200..299) {
-                onError("HTTP ${connection.responseCode}")
+                onError(
+                    ChatApiError(
+                        code = "HTTP_ERROR",
+                        userMessage = "服务暂时不可用，请稍后再试。",
+                        details = "HTTP ${connection.responseCode}"
+                    )
+                )
                 return
             }
 
@@ -71,7 +83,14 @@ object ChatApi {
                 }
             }
         } catch (error: Exception) {
-            onError(error.message ?: "Chat request failed")
+            // 客户端连不上后端时不会收到 SSE error，只能在这里归类为 NETWORK_ERROR。
+            onError(
+                ChatApiError(
+                    code = "NETWORK_ERROR",
+                    userMessage = "无法连接后端服务，请确认服务已启动。",
+                    details = error.message ?: "Chat request failed"
+                )
+            )
         } finally {
             connection.disconnect()
         }
@@ -83,7 +102,7 @@ object ChatApi {
         onToken: (String) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
-        onError: (String) -> Unit
+        onError: (ChatApiError) -> Unit
     ) {
         when (eventName) {
             "token" -> {
@@ -118,12 +137,31 @@ object ChatApi {
             "done" -> onDone()
 
             "error" -> {
-                // 后端把错误也包装成 SSE 事件，客户端可以用同一条流完成错误展示和 loading 收尾。
+                // 后端把错误也包装成 SSE 事件。客户端根据 code 转成用户文案，同时保留错误码给开发排障。
                 val error = JSONObject(data).optJSONObject("error")
-                val message = error?.optString("message") ?: "Backend error"
+                val code = error?.optString("code").orEmpty().ifBlank { "INTERNAL_ERROR" }
+                val message = error?.optString("message").orEmpty()
                 val details = error?.optString("details").orEmpty()
-                onError(if (details.isBlank()) message else "$message: $details")
+                onError(
+                    ChatApiError(
+                        code = code,
+                        userMessage = friendlyMessageForCode(code, message),
+                        details = details
+                    )
+                )
             }
+        }
+    }
+
+    private fun friendlyMessageForCode(code: String, fallback: String): String {
+        return when (code) {
+            "VALIDATION_ERROR" -> "请输入你的购物需求。"
+            "RETRIEVAL_ERROR" -> "商品检索暂时不可用，请稍后再试。"
+            "MODEL_ERROR" -> "AI 生成暂时不可用，请稍后再试。"
+            "NOT_FOUND" -> "没有找到对应资源。"
+            "INVALID_JSON" -> "请求格式异常，请稍后再试。"
+            "INTERNAL_ERROR" -> "服务暂时不可用，请稍后再试。"
+            else -> fallback.ifBlank { "服务暂时不可用，请稍后再试。" }
         }
     }
 
