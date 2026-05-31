@@ -113,6 +113,14 @@ function looksLikeReference(message) {
   return /(第[一二三四五六七八九十\d]+[个款]?|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第)/.test(message);
 }
 
+function looksLikeCandidateMetaQuestion(message) {
+  // “这些能不能作为备选/是不是都不推荐”是在讨论上一轮候选集合，不是新的商品检索需求。
+  // 单独识别这类元问题，可以避免 LLM 把“系列、备选”等词误当成新品类或硬过滤条件。
+  return /(这些|这几个|这几款|前面|上面|刚才|上一轮|候选|备选|作为备选|都不推荐|不推荐|推荐吗|能买吗|值得吗|怎么选|选哪个|哪款更好|哪款更合适)/.test(
+    message
+  );
+}
+
 function looksLikeRefinement(message, parsed) {
   return Boolean(
     Number.isFinite(parsed.price.maxPrice) ||
@@ -133,7 +141,7 @@ export function classifyTurnIntent(session, message) {
   };
   const hasContext = hasReusableContext(session);
 
-  if (hasContext && looksLikeReference(message)) {
+  if (hasContext && (looksLikeReference(message) || looksLikeCandidateMetaQuestion(message))) {
     return { type: TURN_INTENTS.REFER, parsed, reason: "用户提到了上一轮商品或候选序号" };
   }
 
@@ -181,14 +189,20 @@ function resolvePricierBudget(session, message) {
   return Math.min(...prices) + 1;
 }
 
-export function updateSessionState(session, message) {
-  const category = inferCategory(message);
-  const itemIntent = inferItemIntent(message);
-  const price = extractPriceConstraint(message);
-  const cheaperBudget = resolveCheaperBudget(session, message);
-  const pricierBudget = resolvePricierBudget(session, message);
-  const excludeTerms = extractNegativeTerms(message);
-  const preferences = extractPreferences(message);
+export function updateSessionState(session, message, parsedOverride = null) {
+  const category = parsedOverride?.category || inferCategory(message);
+  const itemIntent = parsedOverride?.itemIntent || inferItemIntent(message);
+  const price = parsedOverride?.price || extractPriceConstraint(message);
+  const cheaperBudget =
+    parsedOverride?.priceDirection === "lower"
+      ? resolveCheaperBudget(session, "便宜点")
+      : resolveCheaperBudget(session, message);
+  const pricierBudget =
+    parsedOverride?.priceDirection === "higher"
+      ? resolvePricierBudget(session, "太便宜了")
+      : resolvePricierBudget(session, message);
+  const excludeTerms = parsedOverride?.negativeTerms || extractNegativeTerms(message);
+  const preferences = parsedOverride?.preferences || extractPreferences(message);
 
   // 只在本轮明确提到时覆盖核心约束，未提到的条件继续沿用，形成多轮导购记忆。
   if (category) session.state.category = category;

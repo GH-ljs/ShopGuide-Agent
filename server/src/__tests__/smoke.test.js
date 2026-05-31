@@ -167,6 +167,13 @@ async function run() {
       appLimitBudgetProducts.every((product) => Number(product.price) <= 10000),
       "1万预算 with client limit should not display over-budget products"
     );
+    const metaQuestion = await requestChat(baseUrl, "整个系列都不推荐吗", "app-limit-budget-demo", [], 6);
+    const metaQuestionProducts = metaQuestion.find((item) => item.event === "products")?.data.products || [];
+    assert(metaQuestionProducts.length > 0, "candidate meta question should reuse previous candidates instead of searching an empty new need");
+    assert(
+      metaQuestionProducts.every((product) => Number(product.price) <= 10000),
+      "candidate meta question should keep the current filtered candidate set"
+    );
 
     const restored = await requestChat(baseUrl, "再便宜点", "history-restore-demo", [
       {

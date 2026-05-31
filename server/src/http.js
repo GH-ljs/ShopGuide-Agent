@@ -7,10 +7,10 @@ import express from "express";
 import { buildLocalAnswer, buildProductCards, buildProductDetail } from "./services/answer.js";
 import { buildError, ERROR_CODES } from "./utils/errors.js";
 import { streamModelAnswer } from "./services/llm.js";
+import { parseTurnIntent } from "./services/intent.js";
 import {
   appendTurn,
   buildRetrievalQuery,
-  classifyTurnIntent,
   getRecentTurns,
   getSession,
   rememberProducts,
@@ -29,6 +29,7 @@ const MAX_CHAT_PRODUCT_LIMIT = 8;
 
 function shouldUseDeterministicAnswer(config, turnIntent, state, message) {
   if (!config.llmApiKey) return true;
+  if (turnIntent.source === "llm") return false;
   const hasPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
   const isPriceFollowUp = /(便宜|贵|预算|以内|以下|不超过|不要超过|最多|控制在|\d+\s*万)/.test(message);
 
@@ -114,12 +115,12 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 多会话列表在客户端持久化历史；后端上下文只在内存中。若后端刚重启或该会话未命中内存，
     // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
     restoreSessionFromHistory(session, body.history, products);
-    const turnIntent = classifyTurnIntent(session, message);
+    const turnIntent = await parseTurnIntent(config, session, message);
     if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
       resetSessionStateForNewSearch(session);
     }
     // 会话状态先吸收本轮用户输入，后面的检索和 Prompt 都会使用这些结构化约束。
-    const state = updateSessionState(session, message);
+    const state = updateSessionState(session, message, turnIntent.parsed);
     const history = getRecentTurns(session);
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message, {
@@ -267,11 +268,11 @@ function installRoutes(app, { config, products, vectorIndex }) {
       const conversationId = String(req.body?.conversationId || "debug").trim() || "debug";
       const includeMemory = req.body?.includeMemory !== false;
       const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
-      const turnIntent = classifyTurnIntent(session, message);
+      const turnIntent = await parseTurnIntent(config, session, message);
       if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
         resetSessionStateForNewSearch(session);
       }
-      const state = updateSessionState(session, message);
+      const state = updateSessionState(session, message, turnIntent.parsed);
       const retrievalQuery = buildRetrievalQuery(session, message, {
         includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,
         includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
