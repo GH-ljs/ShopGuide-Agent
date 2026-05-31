@@ -23,7 +23,7 @@ data class ProductDetail(
 // SKU 是同一商品下的不同规格，例如容量、颜色、套餐及其对应价格。
 data class ProductSku(
     val skuId: String,
-    val properties: String,
+    val properties: Map<String, String>,
     val price: String
 )
 

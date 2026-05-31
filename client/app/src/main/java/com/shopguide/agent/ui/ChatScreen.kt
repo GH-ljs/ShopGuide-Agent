@@ -73,6 +73,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val LOADING_TEXT = "正在检索商品并生成回答..."
+private const val MAX_HISTORY_MESSAGES_FOR_REQUEST = 8
 
 @Composable
 fun ChatScreen() {
@@ -181,6 +182,7 @@ fun ChatScreen() {
     fun sendMessage(text: String) {
         val userText = text.trim()
         if (userText.isEmpty() || isStreaming) return
+        val historyForRequest = buildHistoryForRequest(messages)
 
         messages.add(
             ChatMessage(
@@ -209,6 +211,7 @@ fun ChatScreen() {
                 ChatApi.streamChat(
                     conversationId = conversationId,
                     message = userText,
+                    history = historyForRequest,
                     onToken = { token ->
                         scope.launch {
                             pendingStreamScrollToBottom = isNearConversationBottom(listState)
@@ -929,6 +932,18 @@ private fun AccountEntry() {
             )
         }
     }
+}
+
+private fun buildHistoryForRequest(messages: List<ChatMessage>): List<ChatMessage> {
+    val firstUserIndex = messages.indexOfFirst { it.role == MessageRole.User }
+    if (firstUserIndex < 0) return emptyList()
+
+    // 只上传当前会话中真正发生过的最近历史，不上传欢迎语和“正在检索...”占位消息。
+    // 后端用这些历史在内存丢失时恢复上下文，因此要按原始顺序保留 user/assistant 轮次。
+    return messages
+        .drop(firstUserIndex)
+        .filter { message -> message.text.isNotBlank() && message.text != LOADING_TEXT }
+        .takeLast(MAX_HISTORY_MESSAGES_FOR_REQUEST)
 }
 
 private fun nextMessageId(messages: List<ChatMessage>): Int {

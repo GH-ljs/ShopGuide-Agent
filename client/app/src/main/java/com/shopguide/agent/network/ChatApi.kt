@@ -1,6 +1,9 @@
 package com.shopguide.agent.network
 
 import com.shopguide.agent.model.ProductCard
+import com.shopguide.agent.model.ChatMessage
+import com.shopguide.agent.model.MessageRole
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -24,6 +27,7 @@ object ChatApi {
     fun streamChat(
         conversationId: String,
         message: String,
+        history: List<ChatMessage>,
         onToken: (String) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
@@ -46,6 +50,7 @@ object ChatApi {
                 .put("conversationId", conversationId)
                 .put("message", message)
                 .put("limit", ApiConfig.CHAT_PRODUCT_LIMIT)
+                .put("history", history.toHistoryJson())
                 .toString()
 
             OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
@@ -178,5 +183,23 @@ object ChatApi {
         if (path.startsWith("http://") || path.startsWith("https://")) return path
         if (path.startsWith("/")) return "${ApiConfig.BASE_URL}$path"
         return path
+    }
+
+    private fun List<ChatMessage>.toHistoryJson(): JSONArray {
+        val array = JSONArray()
+        forEach { message ->
+            val productIds = JSONArray()
+            message.products.forEach { product -> productIds.put(product.productId) }
+
+            // history 只作为后端在内存丢失时的上下文恢复材料：正文恢复 turns，商品 ID 恢复上一轮推荐，
+            // 避免把整张商品卡片重复塞进请求体，也避免跨会话共享任何历史。
+            array.put(
+                JSONObject()
+                    .put("role", if (message.role == MessageRole.User) "user" else "assistant")
+                    .put("content", message.text)
+                    .put("productIds", productIds)
+            )
+        }
+        return array
     }
 }

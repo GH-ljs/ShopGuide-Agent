@@ -53,11 +53,11 @@ async function postJson(baseUrl, path, payload) {
   return response.json();
 }
 
-async function requestChat(baseUrl, message, conversationId = "smoke-demo") {
+async function requestChat(baseUrl, message, conversationId = "smoke-demo", history = []) {
   const response = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify({ conversationId, message })
+    body: JSON.stringify({ conversationId, message, history })
   });
 
   assert(response.ok, "/api/chat should return 2xx");
@@ -90,6 +90,44 @@ async function run() {
     const second = await requestChat(baseUrl, "再便宜点");
     const done = second.find((item) => item.event === "done");
     assert(done.data.conversationId === "smoke-demo", "done event should include conversationId");
+
+    const referFirst = await requestChat(baseUrl, "推荐防晒霜", "refer-demo");
+    const referFirstProducts = referFirst.find((item) => item.event === "products")?.data.products || [];
+    assert(referFirstProducts.length > 0, "refer setup should return products");
+    const referSecond = await requestChat(baseUrl, "第一个怎么样", "refer-demo");
+    const referSecondProducts = referSecond.find((item) => item.event === "products")?.data.products || [];
+    assert(referSecondProducts.length === 1, "refer turn should focus on the referenced product");
+    assert(
+      referSecondProducts[0].productId === referFirstProducts[0].productId,
+      "refer turn should keep the first product instead of searching unrelated products"
+    );
+
+    await requestChat(baseUrl, "推荐防晒霜", "new-search-demo");
+    const newSearch = await requestChat(baseUrl, "我想买蓝牙耳机", "new-search-demo");
+    const newSearchProducts = newSearch.find((item) => item.event === "products")?.data.products || [];
+    assert(newSearchProducts.length > 0, "new search should return products");
+    assert(
+      newSearchProducts.every((product) => product.category === "数码电子" && product.subCategory.includes("耳机")),
+      "new search should reset previous skincare context"
+    );
+
+    const restored = await requestChat(baseUrl, "再便宜点", "history-restore-demo", [
+      {
+        role: "user",
+        content: "想买一台办公用轻薄笔记本"
+      },
+      {
+        role: "assistant",
+        content: "我从商品库里筛出几台轻薄笔记本。",
+        productIds: ["p_digital_023", "p_digital_004", "p_digital_022"]
+      }
+    ]);
+    const restoredProducts = restored.find((item) => item.event === "products")?.data.products || [];
+    assert(restoredProducts.length > 0, "history restore should keep enough context to retrieve products");
+    assert(
+      restoredProducts.every((product) => product.category === "数码电子" && product.subCategory === "笔记本电脑"),
+      "history restore should keep the notebook intent for elliptical follow-up"
+    );
 
     const debug = await postJson(baseUrl, "/api/debug/retrieve", {
       conversationId: "smoke-debug",

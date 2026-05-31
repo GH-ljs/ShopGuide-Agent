@@ -46,6 +46,13 @@ const cases = [
     expectNoResults: true
   },
   {
+    query: "推荐一款适合油皮的防晒霜 不要超过200",
+    expectedCategory: "美妆护肤",
+    expectedItemIntent: "防晒",
+    maxPrice: 200,
+    minResults: 1
+  },
+  {
     query: "送女生的口红",
     expectedCategory: "美妆护肤",
     expectedItemIntent: "唇妆",

@@ -10,11 +10,16 @@ import { streamModelAnswer } from "./services/llm.js";
 import {
   appendTurn,
   buildRetrievalQuery,
+  classifyTurnIntent,
   getRecentTurns,
   getSession,
   rememberProducts,
   resetSession,
+  resetSessionStateForNewSearch,
+  resolveReferencedProducts,
+  restoreSessionFromHistory,
   snapshotSession,
+  TURN_INTENTS,
   updateSessionState
 } from "./services/memory.js";
 import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services/retriever.js";
@@ -96,18 +101,34 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
   try {
     const conversationId = String(body.conversationId || "default").trim() || "default";
     const session = getSession(conversationId);
+    // 多会话列表在客户端持久化历史；后端上下文只在内存中。若后端刚重启或该会话未命中内存，
+    // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
+    restoreSessionFromHistory(session, body.history, products);
+    const turnIntent = classifyTurnIntent(session, message);
+    if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
+      resetSessionStateForNewSearch(session);
+    }
     // 会话状态先吸收本轮用户输入，后面的检索和 Prompt 都会使用这些结构化约束。
     const state = updateSessionState(session, message);
     const history = getRecentTurns(session);
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
-    const retrievalQuery = buildRetrievalQuery(session, message);
+    const retrievalQuery = buildRetrievalQuery(session, message, {
+      includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,
+      includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
+    });
+    const retrievalProducts =
+      turnIntent.type === TURN_INTENTS.REFER
+        ? resolveReferencedProducts(session, message)
+        : products;
 
     const productLimit = resolveChatProductLimit(body.limit);
     // RAG 第一步：从可信商品库检索候选商品。聊天回答和商品卡片必须使用同一组候选，
     // 否则会出现“模型讲了 3 个商品，但客户端展示 4 张卡片”的体验不一致。
     let matchedProducts;
     try {
-      matchedProducts = await retrieveProductsWithState(products, retrievalQuery, state, productLimit, vectorIndex);
+      // turnIntent 决定检索范围：refine/new_search 面向全库，refer 只围绕上一轮候选或指定序号商品。
+      // 这样既能在“不要超过200”时从全库补找低价商品，也能在“第二个怎么样”时不突然跳到新商品。
+      matchedProducts = await retrieveProductsWithState(retrievalProducts, retrievalQuery, state, productLimit, vectorIndex);
     } catch (error) {
       // 检索层异常单独标成 RETRIEVAL_ERROR，方便区分 Qdrant/Embedding/索引问题和模型生成问题。
       throw Object.assign(new Error(error.message), {
@@ -232,15 +253,28 @@ function installRoutes(app, { config, products, vectorIndex }) {
       const conversationId = String(req.body?.conversationId || "debug").trim() || "debug";
       const includeMemory = req.body?.includeMemory !== false;
       const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
+      const turnIntent = classifyTurnIntent(session, message);
+      if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
+        resetSessionStateForNewSearch(session);
+      }
       const state = updateSessionState(session, message);
-      const retrievalQuery = buildRetrievalQuery(session, message);
+      const retrievalQuery = buildRetrievalQuery(session, message, {
+        includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,
+        includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
+      });
+      const retrievalProducts =
+        turnIntent.type === TURN_INTENTS.REFER
+          ? resolveReferencedProducts(session, message)
+          : products;
       // 调试接口返回解析结果、候选数量和向量分数，方便定位“为什么推荐了这些商品”。
-      const debug = await retrieveProductsWithDebug(products, retrievalQuery, state, Number(req.body?.limit || 4), vectorIndex);
+      const debug = await retrieveProductsWithDebug(retrievalProducts, retrievalQuery, state, Number(req.body?.limit || 4), vectorIndex);
 
       return sendJson(res, 200, {
         ok: true,
         conversationId,
         includeMemory,
+        turnIntent,
+        retrievalScope: turnIntent.type === TURN_INTENTS.REFER ? "last_products" : "full_catalog",
         session: snapshotSession(session),
         originalMessage: message,
         retrievalQuery,

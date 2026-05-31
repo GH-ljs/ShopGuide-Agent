@@ -12,20 +12,29 @@ import {
 
 const MAX_TURNS = 6;
 const sessions = new Map();
+export const TURN_INTENTS = {
+  REFINE: "refine",
+  REFER: "refer",
+  NEW_SEARCH: "new_search"
+};
+
+function createEmptyState() {
+  return {
+    category: "",
+    itemIntent: null,
+    maxPrice: null,
+    minPrice: null,
+    excludeTerms: [],
+    preferences: [],
+    lastProductIds: []
+  };
+}
 
 function createEmptySession(conversationId) {
   return {
     conversationId,
     // state 保存“可复用的购物约束”，turns 保存原始对话；两者分开后，检索不必反复猜历史意图。
-    state: {
-      category: "",
-      itemIntent: null,
-      maxPrice: null,
-      minPrice: null,
-      excludeTerms: [],
-      preferences: [],
-      lastProductIds: []
-    },
+    state: createEmptyState(),
     turns: [],
     lastProducts: []
   };
@@ -52,8 +61,100 @@ export function snapshotSession(session) {
   };
 }
 
+function normalizeHistoryTurn(raw) {
+  const role = raw?.role === "assistant" ? "assistant" : raw?.role === "user" ? "user" : "";
+  const content = String(raw?.content || raw?.text || "").trim();
+  const productIds = Array.isArray(raw?.productIds)
+    ? raw.productIds.map((id) => String(id).trim()).filter(Boolean)
+    : [];
+
+  if (!role || !content) return null;
+  return { role, content, productIds };
+}
+
+function restoreProductsByIds(products, productIds) {
+  if (!productIds.length) return [];
+  const productMap = new Map(products.map((product) => [product.productId, product]));
+  return productIds.map((id) => productMap.get(id)).filter(Boolean);
+}
+
+function historyAlreadyCovered(session, history) {
+  if (history.length === 0) return true;
+  if (session.turns.length < history.length) return false;
+
+  const recentTurns = session.turns.slice(-history.length);
+  return history.every((turn, index) => {
+    const existing = recentTurns[index];
+    return existing?.role === turn.role && existing?.content === turn.content;
+  });
+}
+
 function uniqueMerge(current, incoming) {
   return [...new Set([...(current || []), ...incoming])];
+}
+
+function hasReusableContext(session) {
+  return Boolean(session.state.category || session.state.itemIntent || session.lastProducts.length > 0);
+}
+
+function isDifferentItemIntent(current, incoming) {
+  if (!incoming) return false;
+  return current?.itemType !== incoming.itemType;
+}
+
+function isDifferentCategory(current, incoming) {
+  if (!incoming) return false;
+  return current && current !== incoming;
+}
+
+function looksLikeReference(message) {
+  return /(第[一二三四五六七八九十\d]+[个款]?|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第)/.test(message);
+}
+
+function looksLikeRefinement(message, parsed) {
+  return Boolean(
+    Number.isFinite(parsed.price.maxPrice) ||
+      Number.isFinite(parsed.price.minPrice) ||
+      parsed.negativeTerms.length > 0 ||
+      parsed.preferences.length > 0 ||
+      /(再|更|便宜|贵|预算|以内|以下|不超过|不要超过|换个|换一款|轻薄|控油|防水|无糖)/.test(message)
+  );
+}
+
+export function classifyTurnIntent(session, message) {
+  const parsed = {
+    category: inferCategory(message),
+    itemIntent: inferItemIntent(message),
+    price: extractPriceConstraint(message),
+    negativeTerms: extractNegativeTerms(message),
+    preferences: extractPreferences(message)
+  };
+  const hasContext = hasReusableContext(session);
+
+  if (hasContext && looksLikeReference(message)) {
+    return { type: TURN_INTENTS.REFER, parsed, reason: "用户提到了上一轮商品或候选序号" };
+  }
+
+  if (
+    !hasContext ||
+    isDifferentCategory(session.state.category, parsed.category) ||
+    isDifferentItemIntent(session.state.itemIntent, parsed.itemIntent)
+  ) {
+    return { type: TURN_INTENTS.NEW_SEARCH, parsed, reason: "用户提出了新的商品类目或商品类型" };
+  }
+
+  if (looksLikeRefinement(message, parsed)) {
+    return { type: TURN_INTENTS.REFINE, parsed, reason: "用户在上一轮需求上追加预算、偏好或排除条件" };
+  }
+
+  return { type: TURN_INTENTS.REFINE, parsed, reason: "默认沿用当前导购上下文继续筛选" };
+}
+
+export function resetSessionStateForNewSearch(session) {
+  // 新品类/新商品需求不能继承上一轮的预算、排除词和偏好，否则会出现“防晒霜条件污染耳机搜索”的问题。
+  // 只清空可复用购物约束和上一轮商品，原始 turns 保留给模型理解对话语气，但不再参与硬过滤状态。
+  session.state = createEmptyState();
+  session.lastProducts = [];
 }
 
 function resolveCheaperBudget(session, message) {
@@ -85,15 +186,82 @@ export function updateSessionState(session, message) {
   return session.state;
 }
 
-export function buildRetrievalQuery(session, message) {
-  const recentUserMessages = session.turns
-    .filter((turn) => turn.role === "user")
-    .slice(-3)
-    .map((turn) => turn.content);
+function ordinalToIndex(text) {
+  const map = {
+    一: 0,
+    二: 1,
+    两: 1,
+    三: 2,
+    四: 3,
+    五: 4,
+    六: 5,
+    七: 6,
+    八: 7,
+    九: 8,
+    十: 9
+  };
+  const match = String(text || "").match(/第\s*([一二两三四五六七八九十]|\d+)\s*[个款]?/);
+  if (!match) return null;
+  if (/^\d+$/.test(match[1])) return Number(match[1]) - 1;
+  return map[match[1]] ?? null;
+}
 
-  const previousProducts = session.lastProducts
-    .slice(0, 4)
-    .map((product) => `${product.title} ${product.category} ${product.subCategory} ${product.basePrice}元`);
+export function resolveReferencedProducts(session, message) {
+  const index = ordinalToIndex(message);
+  const shouldExcludeOrdinal = /(不要|去掉|排除|删掉)\s*第/.test(message);
+  if (shouldExcludeOrdinal && Number.isInteger(index)) {
+    // “不要第一个”属于对上一轮候选的局部排除，只在 lastProducts 里移除对应商品，
+    // 而不是把“第一个”当成全库检索条件。
+    return session.lastProducts.filter((_, itemIndex) => itemIndex !== index);
+  }
+  if (Number.isInteger(index) && index >= 0 && index < session.lastProducts.length) {
+    return [session.lastProducts[index]];
+  }
+  return session.lastProducts;
+}
+
+export function restoreSessionFromHistory(session, rawHistory = [], products = []) {
+  if (!Array.isArray(rawHistory) || rawHistory.length === 0) {
+    return false;
+  }
+
+  const history = rawHistory.map(normalizeHistoryTurn).filter(Boolean).slice(-MAX_TURNS * 2);
+  if (history.length === 0) return false;
+  if (historyAlreadyCovered(session, history)) return false;
+
+  session.state = createEmptyState();
+  session.turns = [];
+  session.lastProducts = [];
+
+  for (const turn of history) {
+    // 客户端当前会话历史是多会话切换后的事实来源；当后端内存缺失或与客户端历史不一致时，
+    // 用 user 文本重建可复用约束，用 assistant 商品 ID 重建 lastProducts，避免省略式追问失去参照物。
+    if (turn.role === "user") updateSessionState(session, turn.content);
+
+    const restoredProducts = restoreProductsByIds(products, turn.productIds);
+    if (restoredProducts.length > 0) rememberProducts(session, restoredProducts);
+
+    appendTurn(session, turn.role, turn.content);
+  }
+
+  return true;
+}
+
+export function buildRetrievalQuery(session, message, options = {}) {
+  const includeHistory = options.includeHistory !== false;
+  const includeProducts = options.includeProducts !== false;
+  const recentUserMessages = includeHistory
+    ? session.turns
+        .filter((turn) => turn.role === "user")
+        .slice(-3)
+        .map((turn) => turn.content)
+    : [];
+
+  const previousProducts = includeProducts
+    ? session.lastProducts
+        .slice(0, 4)
+        .map((product) => `${product.title} ${product.category} ${product.subCategory} ${product.basePrice}元`)
+    : [];
 
   const stateText = [
     session.state.category,
@@ -104,7 +272,8 @@ export function buildRetrievalQuery(session, message) {
     session.state.minPrice ? `${session.state.minPrice}元以上` : ""
   ];
 
-  // 检索 query 合并最近需求、结构化状态和上一轮商品摘要，让省略式追问能继承上下文。
+  // 检索 query 合并最近需求、结构化状态和上一轮商品摘要，让省略式追问能继承上下文；
+  // new_search 会关闭历史和上一轮商品摘要，避免旧品类污染新需求。
   return [...recentUserMessages, ...stateText, ...previousProducts, message].filter(Boolean).join(" ");
 }
 

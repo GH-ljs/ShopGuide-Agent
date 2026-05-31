@@ -150,7 +150,7 @@ export function extractPriceConstraint(message) {
   const under = normalized.match(/(\d+(?:\.\d+)?)\s*元?\s*(以内|以下|内|之内|以内的|以下的)/);
   if (under) return { maxPrice: Number(under[1]) };
 
-  const belowBefore = normalized.match(/(低于|小于|不超过|不高于)\s*(\d+(?:\.\d+)?)\s*元?/);
+  const belowBefore = normalized.match(/(低于|小于|不超过|不高于|不要超过|别超过|不能超过|最多|最高|预算不超过|控制在)\s*(\d+(?:\.\d+)?)\s*元?/);
   if (belowBefore) return { maxPrice: Number(belowBefore[2]) };
 
   const above = normalized.match(/(高于|大于|超过)\s*(\d+(?:\.\d+)?)\s*元?/);
@@ -166,7 +166,13 @@ export function extractNegativeTerms(message) {
   for (const pattern of patterns) {
     let match;
     while ((match = pattern.exec(message))) {
-      terms.push(match[1].replace(/^含/, "").trim());
+      const term = match[1].replace(/^含/, "").trim();
+      // “不要超过200”是预算上限，不是要排除“超过200”这个商品词；否则会污染多轮状态，
+      // 并和“超过200”最低价解析互相打架，导致 200 元以内商品反而被过滤掉。
+      if (/^(超过|高于|大于|低于|小于|不超过|不高于|不低于|少于|多于)?\s*\d+(?:\.\d+)?\s*元?$/.test(term)) {
+        continue;
+      }
+      terms.push(term);
     }
   }
 

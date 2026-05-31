@@ -57,18 +57,18 @@ object ProductDetailApi {
         return buildList {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
-                val properties = item.optJSONObject("properties")
-                // properties 是动态键值，例如“规格: 100ml / 颜色: 黑色”，展示前先压平成可读文本。
-                val propertiesText = properties
+                val propertiesJson = item.optJSONObject("properties")
+                // SKU properties 是不同品类的动态规格字段，例如“存储配置/产品版本”或“色号/规格”。
+                // 保留结构化 Map，详情页才能动态生成更像电商页的规格表格。
+                val properties = propertiesJson
                     ?.keys()
                     ?.asSequence()
-                    ?.map { key -> "$key: ${properties.optString(key)}" }
-                    ?.joinToString(" / ")
+                    ?.associateWith { key -> propertiesJson.optString(key) }
                     .orEmpty()
                 add(
                     ProductSku(
                         skuId = item.optString("sku_id"),
-                        properties = propertiesText,
+                        properties = properties,
                         price = formatPrice(item.opt("price"))
                     )
                 )

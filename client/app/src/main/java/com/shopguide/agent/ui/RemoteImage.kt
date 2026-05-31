@@ -3,9 +3,12 @@ package com.shopguide.agent.ui
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -17,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -29,7 +33,8 @@ fun RemoteImage(
     imageUrl: String,
     size: Dp,
     contentDescription: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    placeholderText: String? = null
 ) {
     val context = LocalContext.current
     var image by remember(imageUrl) { mutableStateOf<ImageBitmap?>(null) }
@@ -59,6 +64,19 @@ fun RemoteImage(
         )
     } else {
         // 加载中或失败时保留同尺寸占位，避免聊天列表因为图片结果变化而跳动。
-        Spacer(modifier = imageModifier)
+        if (placeholderText.isNullOrBlank()) {
+            Spacer(modifier = imageModifier)
+        } else {
+            Box(
+                modifier = imageModifier,
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = placeholderText,
+                    color = Color(0xFF8A8D95),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
     }
 }
