@@ -1,37 +1,87 @@
 # ShopGuide Agent Server
 
-这是多模态电商智能导购项目的 Node.js 后端 MVP。
+这是 ShopGuide Agent 的 Node.js 后端，负责商品数据加载、RAG 检索、模型调用、SSE 流式接口、商品卡片和详情接口。
 
-## 当前能力
+## 后端职责
 
-- 加载 `../ecommerce_agent_dataset` 下的商品 JSON。
-- 使用本地文本向量检索器搜索商品。
-- 通过 `VECTOR_STORE` 支持本地检索和 Qdrant 检索切换。
-- 支持把商品数据生成向量并写入 Qdrant collection。
-- 支持通过 `EMBEDDING_PROVIDER=ark` 调用 Doubao/Ark embedding API。
-- 通过 SSE 流式返回导购回复。
-- 返回结构化商品卡片。
-- 支持基于 `conversationId` 的内存多轮会话。
-- 支持结构化导购状态，用于处理“再便宜点”“不要含酒精”等追问。
-- 没有聊天模型 Key 时也可以离线运行。
-- 聊天生成支持 `LLM_PROVIDER=ark` 或 `LLM_PROVIDER=deepseek`。
+- 加载 `../ecommerce_agent_dataset` 下的商品 JSON 和图片路径。
+- 标准化商品字段，构造可检索文本。
+- 根据用户问题解析类目、商品类型、预算、排除词和偏好词。
+- 使用本地向量检索或 Qdrant 检索商品。
+- 构造严格基于商品上下文的 RAG Prompt。
+- 调用 DeepSeek 或 Doubao/Ark 聊天模型生成回答。
+- 通过 SSE 返回 `token`、`products`、`done` 事件。
+- 提供商品列表、商品详情、商品图片和检索调试接口。
+
+## 目录说明
+
+```text
+server/
+├─ src/
+│  ├─ index.js                    # 服务入口
+│  ├─ config.js                   # .env 和环境变量读取
+│  ├─ http.js                     # Express 路由、SSE 输出、错误处理
+│  ├─ data/
+│  │  └─ loader.js                # 商品 JSON 加载和标准化
+│  ├─ services/
+│  │  ├─ answer.js                # 商品卡片、详情、本地回答、模型 Prompt
+│  │  ├─ llm.js                   # OpenAI-compatible 流式模型调用
+│  │  ├─ memory.js                # conversationId 会话记忆和导购状态
+│  │  └─ retriever.js             # RAG 检索编排、过滤、排序、调试信息
+│  ├─ utils/
+│  │  ├─ errors.js                # 统一错误格式
+│  │  └─ nlp.js                   # 意图识别、同义词、预算、排除词、偏好词
+│  ├─ vectordb/
+│  │  ├─ local.js                 # 本地向量检索
+│  │  ├─ embedding.js             # local / Ark embedding
+│  │  ├─ qdrant.js                # Qdrant collection 和搜索
+│  │  └─ factory.js               # 检索器工厂
+│  ├─ scripts/
+│  │  ├─ demo-retrieve.js         # Demo 问题批量检索自检
+│  │  ├─ qdrant-health.js         # Qdrant 健康检查
+│  │  ├─ qdrant-ingest.js         # 商品向量写入 Qdrant
+│  │  └─ qdrant-search-test.js    # Qdrant 检索验证
+│  └─ __tests__/
+│     ├─ answer.test.js           # 回答和 Prompt 防幻觉测试
+│     ├─ embedding.test.js        # embedding 测试
+│     ├─ retrieval.test.js        # 基础检索冒烟测试
+│     ├─ retrieval-quality.test.js# RAG 检索质量基线测试
+│     └─ smoke.test.js            # 后端端到端 smoke 测试
+├─ .env                           # 本地配置，不提交
+├─ .env.example                   # 配置示例
+└─ package.json
+```
 
 ## 启动
 
 ```bash
 cd server
-node src/index.js
+npm run dev
 ```
 
-默认向量检索配置：
+启动成功后应看到：
 
 ```text
+ShopGuide Agent server listening on http://localhost:3001
+Loaded 100 products ...
+Vector store: local 或 qdrant
+LLM provider: deepseek 或 ark
+Model streaming: enabled
+```
+
+## 常用配置
+
+### 本地检索
+
+```env
 VECTOR_STORE=local
+EMBEDDING_PROVIDER=local
+EMBEDDING_DIMENSION=384
 ```
 
-Qdrant 配置：
+### Qdrant + 本地 embedding
 
-```text
+```env
 VECTOR_STORE=qdrant
 QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=shopguide_products
@@ -39,128 +89,230 @@ EMBEDDING_PROVIDER=local
 EMBEDDING_DIMENSION=384
 ```
 
-Doubao/Ark embedding 配置示例：
+### Qdrant + Doubao/Ark embedding
 
-```text
+```env
+VECTOR_STORE=qdrant
+QDRANT_URL=http://localhost:6333
 QDRANT_COLLECTION=shopguide_products_ark
 EMBEDDING_PROVIDER=ark
 EMBEDDING_DIMENSION=1024
-ARK_EMBEDDING_MODEL=你的 doubao-embedding-vision endpoint id
+ARK_EMBEDDING_MODEL=doubao-embedding-vision-250615
 ARK_EMBEDDING_PATH=/embeddings/multimodal
 ARK_API_KEY=你的火山方舟 API Key
 ```
 
-DeepSeek 聊天模型配置示例：
+### DeepSeek 聊天模型
 
-```text
+```env
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=你的 DeepSeek API Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-chat
 ```
 
-切回 Doubao/Ark 聊天模型时，改回：
+### Doubao/Ark 聊天模型
 
-```text
+```env
 LLM_PROVIDER=ark
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_MODEL=你的 Ark 聊天模型 endpoint id
 ARK_API_KEY=你的火山方舟 API Key
 ```
 
-`EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套开关。embedding 继续使用 Doubao/Ark 时，`ARK_API_KEY` 要保留；聊天生成使用 DeepSeek 时，`DEEPSEEK_API_KEY` 只负责聊天生成。
+`EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关。可以用 Ark 做 embedding，同时用 DeepSeek 做聊天生成。
 
-本地 Qdrant 启动与检查说明见 `../docs/qdrant.md`。
+## 本轮 RAG 优化
 
-写入商品向量并验证检索：
+### 1. 检索链路更可解释
+
+`retriever.js` 现在会返回完整调试信息：
+
+- `parsed.category`：识别出的商品类目。
+- `parsed.itemIntent`：识别出的商品类型。
+- `parsed.maxPrice / minPrice`：预算条件。
+- `parsed.negativeTerms`：排除词。
+- `parsed.preferences`：偏好词。
+- `counts`：总商品数、类目候选、过滤后候选、向量匹配数、最终商品数。
+- `filterTrace`：商品通过或被过滤的原因。
+- `vectorMatches`：向量分数和偏好命中。
+- `finalSelection`：最终商品、综合排序分数和选中理由。
+
+调试命令：
 
 ```bash
-node src/qdrant.ingest.js
-node src/qdrant.search.test.js
+npm run demo:retrieve
 ```
 
-测试导购接口：
+### 2. 意图识别增强
 
-```bash
-curl -N -X POST http://localhost:3001/api/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"message\":\"推荐一款适合油皮的洗面奶\"}"
+`nlp.js` 增强了类目词、商品类型和同义词，例如：
+
+| 用户表达 | 解析结果 |
+| --- | --- |
+| 口红 | 唇妆 / 唇釉 |
+| 轻薄笔记本 | 数码电子 / 笔记本 |
+| 无糖饮料 | 食品饮料 / 饮料 |
+| 通勤背包 | 服饰运动 / 背包 |
+| 拍照手机 | 数码电子 / 手机，偏好拍照和影像 |
+| 敏感肌面霜 | 美妆护肤 / 面霜，偏好敏感肌、舒缓、修护 |
+
+### 3. 排序策略增强
+
+检索不再只看向量相似度，而是综合：
+
+```text
+rankScore = 向量相似度 + 偏好命中加权 + 商品字段匹配
 ```
+
+例如：
+
+- `推荐无糖饮料` 会优先排 `无糖`、`0糖`、`低糖` 商品。
+- `推荐通勤背包` 会优先排命中 `通勤`、`双肩包`、`日常` 的背包。
+- `推荐一款手机，拍照好一点` 会优先排影像相关手机。
+
+### 4. 无结果不硬推
+
+如果硬约束筛不出商品，后端会返回空结果，回答层会明确说明当前商品库没有满足条件的商品。
+
+典型例子：
+
+```text
+推荐防晒霜，但不要含酒精
+```
+
+如果商品库中的防晒都含有“酒精”相关描述，系统不会硬推荐不符合条件的商品。
+
+### 5. Prompt 防幻觉
+
+`answer.js` 中的 Prompt 已加入约束：
+
+- 只能使用提供的商品上下文。
+- 不得编造不存在的商品。
+- 不得编造价格、库存、优惠券、销量、功效或活动。
+- 候选商品不完全满足条件时必须如实说明。
+- 不输出 JSON，不展示内部字段和检索分数。
 
 ## API
 
-### `GET /api/health`
+### GET `/api/health`
 
-返回服务状态和已加载商品数量。
+健康检查，返回商品数量和模型状态。
 
-### `GET /api/products`
+### GET `/api/products`
 
 返回简化商品列表。
 
-### `POST /api/chat`
+### GET `/api/products/:productId`
+
+返回商品详情。
+
+### GET `/api/products/:productId/image`
+
+返回商品图片。
+
+### POST `/api/chat`
+
+导购聊天接口，响应类型是 `text/event-stream`。
 
 请求示例：
 
 ```json
 {
-  "message": "200元以下的蓝牙耳机有哪些？",
-  "conversationId": "demo"
+  "conversationId": "demo",
+  "message": "推荐一款适合油皮的防晒霜"
 }
 ```
 
-同一个 `conversationId` 的最近对话会参与下一轮检索和模型 Prompt。当前会话记忆存放在进程内存里，服务重启后会清空。
+SSE 事件：
 
-响应类型为 `text/event-stream`：
-
-- `event: token`: 流式文本片段
-- `event: products`: 商品卡片列表
-- `event: done`: 完成标记
-
-### `POST /api/conversations/reset`
-
-清空指定 `conversationId` 的内存会话状态。客户端新建对话时可以调用。
-
-```json
-{
-  "conversationId": "demo"
-}
+```text
+event: token     # 流式文本
+event: products  # 商品卡片
+event: done      # 本轮完成
+event: error     # 错误
 ```
 
-### `POST /api/debug/retrieve`
+### POST `/api/debug/retrieve`
 
-返回检索调试信息，包括解析出的类目、商品类型、过滤候选数量、向量匹配和最终商品卡片。这个接口用于开发调试，不建议直接面向最终用户。
+检索调试接口，用于查看 RAG 检索过程。
+
+请求示例：
 
 ```json
 {
-  "message": "推荐一款适合油皮的防晒霜",
   "conversationId": "debug-demo",
+  "message": "推荐无糖饮料",
+  "limit": 4,
   "includeMemory": false
 }
 ```
 
-完整接口文档见 `../docs/api.md`。
+### POST `/api/conversations/reset`
+
+重置指定 `conversationId` 的会话记忆。
+
+## 测试和自检
+
+```bash
+npm run test:answer
+npm run test:retrieval
+npm run test:retrieval-quality
+npm run test:embedding
+npm run test:smoke
+npm run demo:retrieve
+```
+
+推荐日常开发至少跑：
+
+```bash
+npm run test:answer
+npm run test:retrieval-quality
+npm run test:smoke
+```
+
+## Qdrant
+
+启动 Qdrant：
+
+```powershell
+docker compose up -d qdrant
+```
+
+检查：
+
+```bash
+npm run qdrant:health
+```
+
+写入商品向量：
+
+```bash
+npm run qdrant:ingest
+```
+
+测试 Qdrant 检索：
+
+```bash
+npm run qdrant:test
+```
+
+更详细说明见 [../docs/qdrant.md](../docs/qdrant.md)。
 
 ## 客户端对接重点
 
-第一阶段客户端优先实现：
+客户端应以 `products` 事件中的结构化商品卡片为准，不要从模型自然语言里解析商品 ID、价格、图片或标题。
 
-1. `POST /api/chat`: 接收 SSE，渲染 `token` 文本流和 `products` 商品卡片。
-2. `POST /api/conversations/reset`: 新建对话或清空上下文。
-3. `GET /api/health`: 启动页或调试页检查后端是否可用。
-
-`products` 事件是商品卡片的唯一可靠来源，客户端不要从模型文本里反向解析商品价格、图片路径或商品 ID。
-
-## 测试
-
-```bash
-node src/retrieval.test.js
-node src/embedding.test.js
-node src/smoke.test.js
-node src/qdrant.search.test.js
+```text
+token    -> 用于流式展示回答文本
+products -> 用于展示可点击商品卡片
+done     -> 标记本轮完成
+error    -> 展示错误提示
 ```
 
-## 下一步
+## 注意事项
 
-1. 增强反选条件和多商品对比。
-2. 增加购物车相关 API。
-3. 连接 Android 客户端，通过 SSE 展示流式回复。
+- `.env` 不提交。
+- API Key 不写入 README、源码或示例提交。
+- 真实商品信息以数据集 JSON 为准。
+- 模型回答只作为导购话术，商品卡片和详情数据来自结构化商品数据。

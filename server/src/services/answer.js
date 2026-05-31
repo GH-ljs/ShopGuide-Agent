@@ -1,6 +1,7 @@
 // 文件职责：
-// 回答构造层：生成客户端商品卡片、商品详情、本地兜底回答，以及发送给大模型的结构化 Prompt。
-// 这里维护“回答必须基于商品数据”的边界，避免模型编造商品、价格、库存或优惠。
+// 回答构造层：生成客户端商品卡片、商品详情、本地兜底回答，以及发给大模型的结构化 Prompt。
+// 这里是 RAG 的“生成边界”：回答只能使用检索到的商品证据，不能把模型自己的猜测当成商品事实。
+
 function shortDescription(product) {
   const text = product.marketingDescription || product.title;
   return text.length > 90 ? `${text.slice(0, 90)}...` : text;
@@ -10,8 +11,56 @@ function imageUrlFor(product) {
   return `/api/products/${encodeURIComponent(product.productId)}/image`;
 }
 
+function formatStateConstraints(state = {}) {
+  const parts = [];
+  if (state.category) parts.push(`类目：${state.category}`);
+  if (state.itemIntent?.itemType) parts.push(`商品类型：${state.itemIntent.itemType}`);
+  if (Number.isFinite(state.maxPrice)) parts.push(`预算上限：${state.maxPrice} 元`);
+  if (Number.isFinite(state.minPrice)) parts.push(`预算下限：${state.minPrice} 元`);
+  if (state.excludeTerms?.length) parts.push(`排除条件：${state.excludeTerms.join("、")}`);
+  return parts;
+}
+
+function buildNoResultAnswer(message, state = {}) {
+  const constraints = formatStateConstraints(state);
+  const constraintText = constraints.length > 0 ? `我识别到的条件是：${constraints.join("；")}。` : "";
+  // 空结果时不能让模型或本地兜底“硬凑商品”，否则就违背了 RAG 必须基于商品库回答的原则。
+  return [
+    `当前商品库里没有找到能同时满足“${message}”的商品。`,
+    constraintText,
+    "你可以放宽其中一个条件再试，比如调整预算、去掉某个排除条件，或换成相近品类。",
+    "我不会推荐不在商品库里或不符合硬性条件的商品。"
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildProductEvidence(product) {
+  const faqEvidence = (product.officialFaq || [])
+    .slice(0, 2)
+    .map((item) => `${item.question} ${item.answer}`)
+    .join(" ");
+  const reviewEvidence = (product.userReviews || [])
+    .slice(0, 2)
+    .map((item) => item.content)
+    .join(" ");
+
+  return {
+    product_id: product.productId,
+    title: product.title,
+    brand: product.brand,
+    category: product.category,
+    sub_category: product.subCategory,
+    price: product.basePrice,
+    description: product.marketingDescription,
+    sku_count: product.skus.length,
+    faq_evidence: faqEvidence,
+    review_evidence: reviewEvidence
+  };
+}
+
 export function buildProductCards(products) {
-  // 卡片只暴露客户端展示所需字段，避免把完整 RAG 文本、源文件路径等内部信息塞进聊天流。
+  // 卡片只暴露客户端展示所需字段，避免把源文件路径、完整 RAG 文本等内部信息塞进聊天流。
   return products.map((product) => ({
     productId: product.productId,
     title: product.title,
@@ -26,7 +75,7 @@ export function buildProductCards(products) {
 }
 
 export function buildProductDetail(product) {
-  // 详情页可以看到更完整的 FAQ、SKU、评价等字段，但仍全部来自商品数据源。
+  // 详情页展示 FAQ、SKU、评价等更完整证据，但仍全部来自商品数据源。
   return {
     productId: product.productId,
     title: product.title,
@@ -46,43 +95,45 @@ export function buildProductDetail(product) {
 
 export function buildLocalAnswer(message, products, history = [], state = {}) {
   if (products.length === 0) {
-    return "我在当前商品库里没有找到足够匹配的商品。你可以换一个预算、类目或使用场景再问我。";
+    return buildNoResultAnswer(message, state);
   }
 
   const hasHistory = history.length > 0;
   const intro = hasHistory
-    ? `结合前面的对话和你的新需求“${message}”，我在商品库里优先筛出了 ${products.length} 个候选：`
-    : `根据你的需求“${message}”，我在商品库里优先筛出了 ${products.length} 个候选：`;
-  const stateNote = state.maxPrice ? `我已经按 ${state.maxPrice} 元以内继续筛选。` : "";
+    ? `结合前面的对话和你的新需求“${message}”，我从当前商品库里筛出了 ${products.length} 个候选：`
+    : `根据你的需求“${message}”，我从当前商品库里筛出了 ${products.length} 个候选：`;
+  const stateNote = formatStateConstraints(state);
   const lines = products.map((product, index) => {
     const reason = shortDescription(product);
     return `${index + 1}. ${product.title}，参考价 ${product.basePrice} 元。推荐理由：${reason}`;
   });
-  // 兜底回答也保留防幻觉边界：价格、规格、优惠等只能以商品卡片/详情中的真实数据为准。
-  const guardrail = "以上推荐只基于当前商品库信息，价格和规格以商品卡片/详情为准，我不会额外编造优惠或库存。";
+  // 本地兜底回答也保留防幻觉边界：价格、规格、功效只能以商品卡片和详情里的真实数据为准。
+  const guardrail = "以上推荐只基于当前商品库信息，价格和规格以商品卡片/详情为准，我不会额外编造优惠、库存或商品功效。";
 
-  return [intro, stateNote, ...lines, guardrail].filter(Boolean).join("\n");
+  return [intro, stateNote.length ? `已应用条件：${stateNote.join("；")}。` : "", ...lines, guardrail]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildModelMessages(message, products, history = [], state = {}) {
-  // 给模型的商品上下文是结构化 JSON，目的是让模型基于明确字段回答，而不是自由猜商品信息。
-  const productContext = products.map((product, index) => ({
-    index: index + 1,
-    product_id: product.productId,
-    title: product.title,
-    brand: product.brand,
-    category: product.category,
-    sub_category: product.subCategory,
-    price: product.basePrice,
-    description: product.marketingDescription,
-    skus: product.skus
-  }));
+  const productContext = products.map(buildProductEvidence);
+  const constraints = formatStateConstraints(state);
+  const noResultInstruction =
+    products.length === 0
+      ? "本轮没有检索到商品。你必须明确说明当前商品库没有满足条件的商品，并建议用户放宽条件；禁止推荐任何商品。"
+      : "本轮已有候选商品。你只能围绕候选商品回答，推荐理由必须能从商品上下文中找到依据。";
 
   return [
     {
       role: "system",
-      content:
-        "你是电商智能导购。你需要结合最近对话理解用户追问，但只能基于提供的商品上下文回答，不得编造不存在的商品、价格、库存、优惠券或功能。回答要简洁、自然、可执行。"
+      content: [
+        "你是电商智能导购，负责基于商品库做 RAG 推荐。",
+        "必须遵守：只使用提供的商品上下文；不得编造不存在的商品、价格、库存、优惠券、销量、功效或活动。",
+        "如果候选商品不能完全满足用户条件，要如实说明“更接近需求”或“未完全满足”，不要夸大。",
+        "回答要简洁、中文、自然，优先给出 1-3 个推荐和理由。",
+        "不要输出 JSON，不要提到内部字段名或检索分数。",
+        noResultInstruction
+      ].join("\n")
     },
     ...history.map((turn) => ({
       role: turn.role,
@@ -90,7 +141,12 @@ export function buildModelMessages(message, products, history = [], state = {}) 
     })),
     {
       role: "user",
-      content: `用户需求：${message}\n\n结构化导购状态：${JSON.stringify(state, null, 2)}\n\n商品上下文：${JSON.stringify(productContext, null, 2)}`
+      content: [
+        `用户需求：${message}`,
+        constraints.length ? `结构化条件：${constraints.join("；")}` : "结构化条件：未识别到明确硬约束",
+        `商品上下文：${JSON.stringify(productContext, null, 2)}`,
+        "请基于以上商品上下文回答。"
+      ].join("\n\n")
     }
   ];
 }

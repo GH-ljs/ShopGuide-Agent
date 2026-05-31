@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js",
+    "test:answer": "node src/__tests__/answer.test.js",
     "test:embedding": "node src/__tests__/embedding.test.js",
     "test:retrieval": "node src/__tests__/retrieval.test.js",
+    "test:retrieval-quality": "node src/__tests__/retrieval-quality.test.js",
     "test:smoke": "node src/__tests__/smoke.test.js",
+    "demo:retrieve": "node src/scripts/demo-retrieve.js",
     "qdrant:health": "node src/scripts/qdrant-health.js",
     "qdrant:ingest": "node src/scripts/qdrant-ingest.js",
     "qdrant:test": "node src/scripts/qdrant-search-test.js"
