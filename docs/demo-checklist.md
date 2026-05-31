@@ -106,6 +106,7 @@ npm run demo:retrieve
 $body = @{
   conversationId = "demo-check"
   message = "推荐一款适合油皮的防晒霜"
+  limit = 6
 } | ConvertTo-Json -Compress
 
 $r = Invoke-WebRequest `
@@ -142,7 +143,7 @@ event: done
 
 - 顶部显示后端已连接。
 - 输入 Demo 问题后能看到流式回复。
-- 回复下方出现商品卡片。
+- 回复下方出现横向滑动商品卡片。
 - 点击商品卡片能进入详情页。
 - 详情页能返回聊天页。
 - 无结果问题不会展示错误商品卡片。

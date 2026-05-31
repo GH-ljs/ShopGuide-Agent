@@ -21,7 +21,9 @@ fun InputBar(
     onValueChange: (String) -> Unit,
     onSend: () -> Unit
 ) {
-    // 输入栏不保存自己的状态，而是把 value/onValueChange 交给 ChatScreen，形成单向数据流。
+    // 输入栏不保存自己的状态，而是由 ChatScreen 传入 value/onValueChange，保持 Compose 的单向数据流。
+    val canSend = enabled && value.isNotBlank()
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -41,10 +43,10 @@ fun InputBar(
         )
         Button(
             onClick = onSend,
-            enabled = enabled
+            enabled = canSend
         ) {
-            // 流式请求期间禁用按钮，避免同一个会话里并发发送多条消息导致状态交错。
-            Text(if (enabled) "发送" else "发送中")
+            // 流式请求期间禁用发送，避免同一个会话并发发送多条消息导致上下文顺序错乱。
+            Text(if (enabled) "发送" else "生成中")
         }
     }
 }

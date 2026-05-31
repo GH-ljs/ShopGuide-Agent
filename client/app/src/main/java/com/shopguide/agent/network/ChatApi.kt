@@ -39,6 +39,7 @@ object ChatApi {
             val requestBody = JSONObject()
                 .put("conversationId", conversationId)
                 .put("message", message)
+                .put("limit", ApiConfig.CHAT_PRODUCT_LIMIT)
                 .toString()
 
             OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
