@@ -21,6 +21,10 @@ function formatStateConstraints(state = {}) {
   return parts;
 }
 
+function formatMemorySummary(state = {}) {
+  return String(state.memorySummary || "").trim();
+}
+
 function buildNoResultAnswer(message, state = {}) {
   const constraints = formatStateConstraints(state);
   const constraintText = constraints.length > 0 ? `我识别到的条件是：${constraints.join("；")}。` : "";
@@ -141,6 +145,7 @@ export function buildLocalAnswer(message, products, history = [], state = {}) {
 export function buildModelMessages(message, products, history = [], state = {}) {
   const productContext = products.map(buildProductEvidence);
   const constraints = formatStateConstraints(state);
+  const memorySummary = formatMemorySummary(state);
   const productListRule = formatProductListRule(products);
   const noResultInstruction =
     products.length === 0
@@ -167,6 +172,7 @@ export function buildModelMessages(message, products, history = [], state = {}) 
       role: "user",
       content: [
         `用户需求：${message}`,
+        memorySummary ? `会话长期摘要：\n${memorySummary}` : "",
         constraints.length ? `结构化条件：${constraints.join("；")}` : "结构化条件：未识别到明确硬约束",
         `商品上下文：${JSON.stringify(productContext, null, 2)}`,
         "请基于以上商品上下文回答。"

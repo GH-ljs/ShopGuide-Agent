@@ -58,6 +58,13 @@ function run() {
   assert(historyPrompt.includes("OLD_USER_NEED"), "prompt should keep recent user context");
   assert(!historyPrompt.includes("SHOULD_NOT_LEAK_OLD_PRODUCTS"), "prompt should not reuse old assistant product lists as facts");
 
+  const memoryMessages = buildModelMessages("刚才笔记本第三款呢", [first], [], {
+    memorySummary: "历史需求；数码电子；笔记本；预算不超过10000元"
+  });
+  const memoryPrompt = memoryMessages.map((item) => item.content).join("\n");
+  assert(memoryPrompt.includes("会话长期摘要"), "prompt should expose long-term memory summary");
+  assert(memoryPrompt.includes("预算不超过10000元"), "prompt should include structured long-term memory details");
+
   console.log("Answer tests passed.");
 }
 

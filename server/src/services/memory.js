@@ -30,15 +30,103 @@ function createEmptyState() {
   };
 }
 
-function createEmptySession(conversationId) {
+function createNeed(session, state = createEmptyState()) {
+  const sequence = (session.nextNeedSeq || 0) + 1;
+  session.nextNeedSeq = sequence;
   return {
+    needId: `need_${sequence}`,
+    status: "active",
+    state,
+    lastProducts: [],
+    referenceProducts: []
+  };
+}
+
+function formatNeedSummary(need) {
+  const state = need.state || {};
+  const parts = [
+    need.status === "active" ? "当前需求" : "历史需求",
+    state.category,
+    state.itemIntent?.itemType,
+    state.maxPrice ? `预算不超过${state.maxPrice}元` : "",
+    state.minPrice ? `预算不低于${state.minPrice}元` : "",
+    state.preferences?.length ? `偏好:${state.preferences.join("/")}` : "",
+    state.excludeTerms?.length ? `排除:${state.excludeTerms.join("/")}` : "",
+    need.referenceProducts?.length ? `候选:${need.referenceProducts.slice(0, 3).map((product) => product.title).join("、")}` : ""
+  ].filter(Boolean);
+
+  return parts.join("；");
+}
+
+export function buildConversationMemorySummary(session) {
+  const needSummaries = (session.needs || [])
+    .filter((need) => need.state?.category || need.state?.itemIntent || need.referenceProducts?.length)
+    .slice(-5)
+    .map(formatNeedSummary)
+    .filter(Boolean);
+
+  return needSummaries.length ? needSummaries.join("\n") : "";
+}
+
+function refreshSessionSummary(session) {
+  // summary 是从结构化 needs 派生出来的长期摘要，不直接相信模型自由生成。
+  // 它用于给检索和 Prompt 提供长对话背景，但真正的预算、排除词和商品边界仍以 state/products 为准。
+  session.summary = buildConversationMemorySummary(session);
+}
+
+function createEmptySession(conversationId) {
+  const session = {
     conversationId,
     // state 保存“可复用的购物约束”，turns 保存原始对话；两者分开后，检索不必反复猜历史意图。
     state: createEmptyState(),
     turns: [],
     lastProducts: [],
-    referenceProducts: []
+    referenceProducts: [],
+    needs: [],
+    activeNeedId: "",
+    nextNeedSeq: 0,
+    summary: ""
   };
+  const initialNeed = createNeed(session, session.state);
+  session.needs.push(initialNeed);
+  session.activeNeedId = initialNeed.needId;
+  return session;
+}
+
+function getActiveNeed(session) {
+  let need = session.needs?.find((item) => item.needId === session.activeNeedId);
+  if (!need) {
+    need = createNeed(session, session.state || createEmptyState());
+    session.needs = [...(session.needs || []), need];
+    session.activeNeedId = need.needId;
+  }
+  return need;
+}
+
+function syncSessionFromNeed(session, need = getActiveNeed(session)) {
+  // 旧检索链路仍读取 session.state/lastProducts/referenceProducts；active need 是新的结构化记忆源。
+  // 每次切换需求时做一次同步，既能逐步升级架构，又不会一次性改动 retriever/answer 的全部入参。
+  session.state = need.state || createEmptyState();
+  session.lastProducts = need.lastProducts || [];
+  session.referenceProducts = need.referenceProducts || [];
+}
+
+function persistSessionToActiveNeed(session) {
+  const need = getActiveNeed(session);
+  need.state = session.state;
+  need.lastProducts = session.lastProducts || [];
+  need.referenceProducts = session.referenceProducts || [];
+  need.status = "active";
+  return need;
+}
+
+function activateNeed(session, need) {
+  for (const item of session.needs || []) {
+    item.status = item.needId === need.needId ? "active" : "paused";
+  }
+  session.activeNeedId = need.needId;
+  syncSessionFromNeed(session, need);
+  return need;
 }
 
 export function getSession(conversationId) {
@@ -59,7 +147,19 @@ export function snapshotSession(session) {
     state: session.state,
     turnCount: session.turns.length,
     lastProductIds: session.lastProducts.map((product) => product.productId),
-    referenceProductIds: (session.referenceProducts || []).map((product) => product.productId)
+    referenceProductIds: (session.referenceProducts || []).map((product) => product.productId),
+    activeNeedId: session.activeNeedId,
+    summary: session.summary || buildConversationMemorySummary(session),
+    needs: (session.needs || []).map((need) => ({
+      needId: need.needId,
+      status: need.status,
+      category: need.state?.category || "",
+      itemType: need.state?.itemIntent?.itemType || "",
+      maxPrice: need.state?.maxPrice ?? null,
+      minPrice: need.state?.minPrice ?? null,
+      candidateProductIds: (need.referenceProducts || []).map((product) => product.productId),
+      lastProductIds: (need.lastProducts || []).map((product) => product.productId)
+    }))
   };
 }
 
@@ -161,11 +261,39 @@ export function classifyTurnIntent(session, message) {
 }
 
 export function resetSessionStateForNewSearch(session) {
-  // 新品类/新商品需求不能继承上一轮的预算、排除词和偏好，否则会出现“防晒霜条件污染耳机搜索”的问题。
-  // 只清空可复用购物约束和上一轮商品，原始 turns 保留给模型理解对话语气，但不再参与硬过滤状态。
-  session.state = createEmptyState();
-  session.lastProducts = [];
-  session.referenceProducts = [];
+  // 新品类/新商品需求不再覆盖旧需求，而是创建新的 active need。
+  // 这样同一会话里先聊笔记本、再聊防晒霜、之后又回头问笔记本时，旧候选和预算仍有结构化记录可恢复。
+  for (const need of session.needs || []) need.status = "paused";
+  const need = createNeed(session, createEmptyState());
+  session.needs = [...(session.needs || []), need];
+  activateNeed(session, need);
+}
+
+function needMatchesParsed(need, parsed = {}) {
+  const state = need?.state || {};
+  const parsedCategory = parsed.category || "";
+  const parsedItemType = parsed.itemIntent?.itemType || "";
+  const categoryMatches = !parsedCategory || state.category === parsedCategory;
+  const itemMatches = !parsedItemType || state.itemIntent?.itemType === parsedItemType;
+  return Boolean((parsedCategory || parsedItemType) && categoryMatches && itemMatches);
+}
+
+export function selectNeedForTurn(session, turnIntent) {
+  const parsed = turnIntent?.parsed || {};
+  const matchingNeed = (session.needs || [])
+    .filter((need) => need.needId !== session.activeNeedId)
+    .reverse()
+    .find((need) => needMatchesParsed(need, parsed));
+
+  if (matchingNeed && (turnIntent.type === TURN_INTENTS.REFER || turnIntent.type === TURN_INTENTS.REFINE)) {
+    // “刚才那个笔记本第三款”这类跨需求回看，要先把 active need 切回笔记本，
+    // 再让 resolveReferencedProducts 从该 need 的 referenceProducts 中取序号。
+    activateNeed(session, matchingNeed);
+    return matchingNeed;
+  }
+
+  syncSessionFromNeed(session);
+  return getActiveNeed(session);
 }
 
 function resolveCheaperBudget(session, message) {
@@ -220,6 +348,8 @@ export function updateSessionState(session, message, parsedOverride = null) {
   session.state.excludeTerms = uniqueMerge(session.state.excludeTerms, excludeTerms);
   session.state.preferences = uniqueMerge(session.state.preferences, preferences);
 
+  persistSessionToActiveNeed(session);
+  refreshSessionSummary(session);
   return session.state;
 }
 
@@ -271,6 +401,13 @@ export function restoreSessionFromHistory(session, rawHistory = [], products = [
   session.turns = [];
   session.lastProducts = [];
   session.referenceProducts = [];
+  session.needs = [];
+  session.activeNeedId = "";
+  session.nextNeedSeq = 0;
+  session.summary = "";
+  const restoredNeed = createNeed(session, session.state);
+  session.needs.push(restoredNeed);
+  session.activeNeedId = restoredNeed.needId;
 
   for (const turn of history) {
     // 客户端当前会话历史是多会话切换后的事实来源；当后端内存缺失或与客户端历史不一致时，
@@ -313,10 +450,11 @@ export function buildRetrievalQuery(session, message, options = {}) {
     session.state.maxPrice ? `${session.state.maxPrice}元以下` : "",
     session.state.minPrice ? `${session.state.minPrice}元以上` : ""
   ];
+  const memorySummary = includeHistory && session.summary ? [`会话长期摘要：${session.summary}`] : [];
 
   // 检索 query 合并最近需求、结构化状态和上一轮商品摘要，让省略式追问能继承上下文；
   // new_search 会关闭历史和上一轮商品摘要，避免旧品类污染新需求。
-  return [...recentUserMessages, ...stateText, ...previousProducts, message].filter(Boolean).join(" ");
+  return [...memorySummary, ...recentUserMessages, ...stateText, ...previousProducts, message].filter(Boolean).join(" ");
 }
 
 export function getRecentTurns(session) {
@@ -344,4 +482,6 @@ export function rememberProducts(session, products, options = {}) {
     session.referenceProducts = products;
   }
   session.state.lastProductIds = products.map((product) => product.productId);
+  persistSessionToActiveNeed(session);
+  refreshSessionSummary(session);
 }

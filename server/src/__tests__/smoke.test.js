@@ -121,6 +121,26 @@ async function run() {
       "new search should reset previous skincare context"
     );
 
+    const laptopBeforeSwitch = await requestChat(baseUrl, "想买一台办公轻薄笔记本", "multi-need-demo", [], 6);
+    const laptopBeforeSwitchProducts = laptopBeforeSwitch.find((item) => item.event === "products")?.data.products || [];
+    assert(laptopBeforeSwitchProducts.length >= 3, "multi-need setup should keep notebook candidates");
+    await requestChat(baseUrl, "推荐一款适合油皮的防晒霜", "multi-need-demo", [], 6);
+    const returnToLaptop = await requestChat(baseUrl, "刚才笔记本第三款呢", "multi-need-demo", [], 6);
+    const returnToLaptopProducts = returnToLaptop.find((item) => item.event === "products")?.data.products || [];
+    assert(returnToLaptopProducts.length === 1, "cross-need reference should focus on the referenced old candidate");
+    assert(
+      returnToLaptopProducts[0].productId === laptopBeforeSwitchProducts[2].productId,
+      "cross-need reference should restore notebook need instead of using sunscreen candidates"
+    );
+    const multiNeedDebug = await postJson(baseUrl, "/api/debug/retrieve", {
+      conversationId: "multi-need-demo",
+      message: "刚才笔记本还有哪些",
+      limit: 6
+    });
+    assert(multiNeedDebug.session.summary.includes("笔记本"), "session summary should keep notebook need");
+    assert(multiNeedDebug.session.summary.includes("防晒"), "session summary should keep sunscreen need");
+    assert(multiNeedDebug.retrievalQuery.includes("会话长期摘要"), "retrieval query should include long-term memory for follow-ups");
+
     await requestChat(baseUrl, "推荐一款适合油皮的防晒霜", "price-direction-demo");
     const pricier = await requestChat(baseUrl, "太便宜了", "price-direction-demo");
     const pricierProducts = pricier.find((item) => item.event === "products")?.data.products || [];

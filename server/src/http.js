@@ -10,6 +10,7 @@ import { streamModelAnswer } from "./services/llm.js";
 import { parseTurnIntent } from "./services/intent.js";
 import {
   appendTurn,
+  buildConversationMemorySummary,
   buildRetrievalQuery,
   getRecentTurns,
   getSession,
@@ -17,6 +18,7 @@ import {
   resetSession,
   resetSessionStateForNewSearch,
   resolveReferencedProducts,
+  selectNeedForTurn,
   restoreSessionFromHistory,
   snapshotSession,
   TURN_INTENTS,
@@ -53,6 +55,16 @@ function resolveChatProductLimit(rawLimit) {
   if (!Number.isFinite(limit)) return DEFAULT_CHAT_PRODUCT_LIMIT;
   // 聊天接口允许客户端按展示形态调整卡片数量，但仍设置上限，避免一次返回太多商品让回答失焦。
   return Math.max(1, Math.min(MAX_CHAT_PRODUCT_LIMIT, Math.floor(limit)));
+}
+
+function parsedRetrievalInput(turnIntent) {
+  const parsed = turnIntent?.parsed || {};
+  return {
+    price: parsed.price || {},
+    negativeTerms: parsed.negativeTerms || [],
+    inferredCategory: parsed.category || "",
+    itemIntent: parsed.itemIntent || null
+  };
 }
 
 async function streamText(res, text) {
@@ -118,9 +130,15 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const turnIntent = await parseTurnIntent(config, session, message);
     if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
       resetSessionStateForNewSearch(session);
+    } else {
+      selectNeedForTurn(session, turnIntent);
     }
     // 会话状态先吸收本轮用户输入，后面的检索和 Prompt 都会使用这些结构化约束。
     const state = updateSessionState(session, message, turnIntent.parsed);
+    const answerState = {
+      ...state,
+      memorySummary: buildConversationMemorySummary(session)
+    };
     const history = getRecentTurns(session);
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message, {
@@ -139,7 +157,16 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     try {
       // turnIntent 决定检索范围：refine/new_search 面向全库，refer 只围绕上一轮候选或指定序号商品。
       // 这样既能在“不要超过200”时从全库补找低价商品，也能在“第二个怎么样”时不突然跳到新商品。
-      matchedProducts = await retrieveProductsWithState(retrievalProducts, retrievalQuery, state, productLimit, vectorIndex);
+      // retrievalQuery 会拼入摘要和历史文本，只适合做语义排序；硬约束必须来自结构化解析结果和 state。
+      // 否则“预算不低于 171 元”这类摘要文字可能被二次正则误读成预算上限，导致候选被错误过滤空。
+      matchedProducts = await retrieveProductsWithState(
+        retrievalProducts,
+        retrievalQuery,
+        state,
+        productLimit,
+        vectorIndex,
+        parsedRetrievalInput(turnIntent)
+      );
     } catch (error) {
       // 检索层异常单独标成 RETRIEVAL_ERROR，方便区分 Qdrant/Embedding/索引问题和模型生成问题。
       throw Object.assign(new Error(error.message), {
@@ -154,7 +181,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
-        for await (const token of streamModelAnswer(config, message, answerProducts, history, state)) {
+        for await (const token of streamModelAnswer(config, message, answerProducts, history, answerState)) {
           answerText += token;
           writeSse(res, "token", { content: token });
         }
@@ -169,7 +196,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
       // 价格/预算/指代追问使用后端确定性回答：这类问题的正确性主要取决于硬过滤结果，
       // 由模板列出同一批 answerProducts，可以避免模型把上一轮已淘汰的商品重新写进回答。
-      answerText = buildLocalAnswer(message, answerProducts, history, state);
+      answerText = buildLocalAnswer(message, answerProducts, history, answerState);
       await streamText(res, answerText);
     }
 
@@ -271,6 +298,8 @@ function installRoutes(app, { config, products, vectorIndex }) {
       const turnIntent = await parseTurnIntent(config, session, message);
       if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
         resetSessionStateForNewSearch(session);
+      } else {
+        selectNeedForTurn(session, turnIntent);
       }
       const state = updateSessionState(session, message, turnIntent.parsed);
       const retrievalQuery = buildRetrievalQuery(session, message, {
@@ -282,7 +311,14 @@ function installRoutes(app, { config, products, vectorIndex }) {
           ? resolveReferencedProducts(session, message)
           : products;
       // 调试接口返回解析结果、候选数量和向量分数，方便定位“为什么推荐了这些商品”。
-      const debug = await retrieveProductsWithDebug(retrievalProducts, retrievalQuery, state, Number(req.body?.limit || 4), vectorIndex);
+      const debug = await retrieveProductsWithDebug(
+        retrievalProducts,
+        retrievalQuery,
+        state,
+        Number(req.body?.limit || 4),
+        vectorIndex,
+        parsedRetrievalInput(turnIntent)
+      );
 
       return sendJson(res, 200, {
         ok: true,
