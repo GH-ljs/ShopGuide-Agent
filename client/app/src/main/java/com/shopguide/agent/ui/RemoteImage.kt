@@ -17,11 +17,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.shopguide.agent.storage.ImageCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.URL
 
 @Composable
 fun RemoteImage(
@@ -30,16 +31,16 @@ fun RemoteImage(
     contentDescription: String,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var image by remember(imageUrl) { mutableStateOf<ImageBitmap?>(null) }
     val shape = RoundedCornerShape(8.dp)
 
     LaunchedEffect(imageUrl) {
-        // 图片下载是阻塞 IO，必须切到 Dispatchers.IO；imageUrl 改变时会重新加载。
+        // 先读本地缓存，缓存没有时再下载；下载成功会写入缓存，支撑后端离线时展示历史卡片图片。
         image = withContext(Dispatchers.IO) {
             runCatching {
-                URL(imageUrl).openStream().use { input ->
-                    BitmapFactory.decodeStream(input)?.asImageBitmap()
-                }
+                val bytes = ImageCache.loadOrDownload(context, imageUrl) ?: return@runCatching null
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
             }.getOrNull()
         }
     }
