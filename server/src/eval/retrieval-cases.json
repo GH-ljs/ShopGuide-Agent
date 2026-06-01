@@ -1,0 +1,122 @@
+[
+  {
+    "id": "beauty_sunscreen_oily",
+    "query": "推荐一款适合油皮的防晒霜",
+    "relevantProductIds": ["p_beauty_006", "p_beauty_010", "p_beauty_023"],
+    "notes": "美妆护肤 / 防晒，油皮或清爽控油相关商品应被召回。"
+  },
+  {
+    "id": "beauty_cleanser",
+    "query": "推荐一款温和清洁的洗面奶",
+    "relevantProductIds": ["p_beauty_011"],
+    "notes": "美妆护肤 / 洁面，商品库中目前只有一款明确洁面。"
+  },
+  {
+    "id": "digital_earbuds_noise_canceling",
+    "query": "想买一副主动降噪蓝牙耳机",
+    "relevantProductIds": ["p_digital_007", "p_digital_018"],
+    "notes": "数码电子 / 真无线耳机，主动降噪相关商品。"
+  },
+  {
+    "id": "clothes_light_running_shoes",
+    "query": "帮我推荐轻量跑鞋，适合日常跑步",
+    "relevantProductIds": ["p_clothes_007", "p_clothes_008", "p_clothes_009", "p_clothes_010"],
+    "notes": "服饰运动 / 跑步鞋，日常训练或轻量跑步相关商品。"
+  },
+  {
+    "id": "food_zero_sugar_drinks",
+    "query": "推荐无糖饮料，最好适合减脂期",
+    "relevantProductIds": ["p_food_003", "p_food_004", "p_food_014", "p_food_015", "p_food_024"],
+    "notes": "食品饮料中明确无糖、0糖或低糖替代的饮料。"
+  },
+  {
+    "id": "clothes_commute_backpack",
+    "query": "推荐通勤双肩背包，要能装日常东西",
+    "relevantProductIds": ["p_clothes_018", "p_clothes_025"],
+    "notes": "服饰运动 / 背包，通勤或日常双肩背包。"
+  },
+  {
+    "id": "digital_light_office_laptop",
+    "query": "想买一台办公用轻薄笔记本",
+    "relevantProductIds": ["p_digital_004", "p_digital_020", "p_digital_022", "p_digital_023"],
+    "notes": "数码电子 / 笔记本电脑，轻薄办公场景。"
+  },
+  {
+    "id": "beauty_lip_color_gift",
+    "query": "送女生的口红唇釉推荐",
+    "relevantProductIds": ["p_beauty_015"],
+    "notes": "美妆护肤 / 唇釉，当前商品库只有一款明确唇部彩妆。"
+  },
+  {
+    "id": "digital_photo_phone",
+    "query": "推荐一款拍照好的手机",
+    "relevantProductIds": ["p_digital_001", "p_digital_002", "p_digital_008", "p_digital_015", "p_digital_016", "p_digital_017"],
+    "notes": "数码电子 / 智能手机，影像、拍照或旗舰拍摄相关商品。"
+  },
+  {
+    "id": "digital_study_tablet",
+    "query": "学生学习用平板电脑推荐",
+    "relevantProductIds": ["p_digital_005", "p_digital_011", "p_digital_013", "p_digital_019", "p_digital_021", "p_digital_024", "p_digital_025"],
+    "notes": "数码电子 / 平板电脑，学习、办公或娱乐平板。"
+  },
+  {
+    "id": "food_work_coffee",
+    "query": "上班提神的咖啡推荐",
+    "relevantProductIds": ["p_food_001", "p_food_002", "p_food_022", "p_food_023"],
+    "notes": "食品饮料 / 咖啡，工作提神场景。"
+  },
+  {
+    "id": "food_energy_drink",
+    "query": "运动后补充能量的功能饮料",
+    "relevantProductIds": ["p_food_005", "p_food_006", "p_food_025"],
+    "notes": "食品饮料 / 功能饮料，能量、维生素或运动补给。"
+  },
+  {
+    "id": "clothes_hiking_shoes",
+    "query": "户外徒步防水鞋推荐",
+    "relevantProductIds": ["p_clothes_014", "p_clothes_015"],
+    "notes": "服饰运动 / 徒步鞋，户外、防水、徒步场景。"
+  },
+  {
+    "id": "beauty_sensitive_moisturizer",
+    "query": "敏感肌保湿修护面霜推荐",
+    "relevantProductIds": ["p_beauty_007", "p_beauty_012"],
+    "notes": "美妆护肤 / 面霜，敏感肌、修护屏障、保湿。"
+  },
+  {
+    "id": "beauty_anti_aging_serum",
+    "query": "想买抗初老淡纹精华",
+    "relevantProductIds": ["p_beauty_001", "p_beauty_002", "p_beauty_004", "p_beauty_009", "p_beauty_024"],
+    "notes": "美妆护肤 / 精华，抗初老、淡纹、修护或紧致。"
+  },
+  {
+    "id": "beauty_setting_powder_oily",
+    "query": "油皮控油定妆蜜粉推荐",
+    "relevantProductIds": ["p_beauty_013", "p_beauty_014"],
+    "notes": "美妆护肤 / 蜜粉，控油定妆。"
+  },
+  {
+    "id": "digital_budget_phone",
+    "query": "预算四千以内的手机，日常拍照和续航都要可以",
+    "relevantProductIds": ["p_digital_016"],
+    "notes": "数码电子 / 智能手机，带预算上限时应优先命中价格符合的手机。"
+  },
+  {
+    "id": "clothes_training_tshirt",
+    "query": "跑步训练穿的速干短袖",
+    "relevantProductIds": ["p_clothes_002", "p_clothes_003", "p_clothes_020", "p_clothes_021"],
+    "notes": "服饰运动 / 速干或训练短袖，跑步训练场景。"
+  },
+  {
+    "id": "food_milk_breakfast",
+    "query": "早餐喝的常温牛奶推荐",
+    "relevantProductIds": ["p_food_007", "p_food_016"],
+    "notes": "食品饮料 / 牛奶，早餐和常温乳制品。"
+  },
+  {
+    "id": "food_instant_noodles",
+    "query": "方便面夜宵囤货推荐",
+    "relevantProductIds": ["p_food_011", "p_food_012", "p_food_020", "p_food_021"],
+    "notes": "食品饮料 / 方便食品，泡面、夜宵和囤货。"
+  }
+]

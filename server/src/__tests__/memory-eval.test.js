@@ -90,6 +90,56 @@ async function run() {
 
   try {
     results.push(
+      await runCase("缺少候选边界：新会话直接问第二款怎么样不应触发商品检索", async () => {
+        const conversationId = "memory-missing-context";
+        const response = await chat(baseUrl, conversationId, "第二款怎么样");
+
+        assert(response.products.length === 0, "missing-context question should not return product cards");
+        assert(response.tokenText.includes("还没有可参考的候选商品"), "answer should explain missing candidate context");
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "2和3哪个好");
+        assert(debug.turnIntent.type === "missing_context", "debug intent should expose missing_context");
+        assert(debug.retrievalScope === "missing_context", "debug retrieval scope should explain why retrieval is skipped");
+
+        const explicitNeed = await chat(baseUrl, "memory-missing-context-new-search", "哪款防晒好");
+        assert(explicitNeed.products.length > 0, "explicit product type question should still start a new search");
+        assert(explicitNeed.products.every((product) => product.subCategory === "防晒"), "explicit product type should return sunscreen products");
+      })
+    );
+
+    results.push(
+      await runCase("非购物边界：明显无关问题不应触发商品检索", async () => {
+        const conversationId = "memory-out-of-scope";
+        const response = await chat(baseUrl, conversationId, "天气怎么样");
+
+        assert(response.products.length === 0, "out-of-scope question should not return product cards");
+        assert(response.tokenText.includes("商品导购"), "answer should explain the shopping-assistant boundary");
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "帮我写论文");
+        assert(debug.turnIntent.type === "out_of_scope", "debug intent should expose out_of_scope");
+        assert(debug.retrievalScope === "out_of_scope", "debug retrieval scope should explain why retrieval is skipped");
+
+        await chat(baseUrl, conversationId, "推荐一款防晒霜");
+        const contextualDebug = await debugRetrieve(baseUrl, conversationId, "天气怎么样");
+        assert(contextualDebug.turnIntent.type === "out_of_scope", "out-of-scope should not be swallowed by existing product context");
+      })
+    );
+
+    results.push(
+      await runCase("多需求边界：同一句多个品类先澄清而不是混合检索", async () => {
+        const conversationId = "memory-multi-need";
+        const response = await chat(baseUrl, conversationId, "想买笔记本和防晒霜");
+
+        assert(response.products.length === 0, "multi-need question should not return a mixed product-card list");
+        assert(response.tokenText.includes("多个商品需求"), "answer should ask the user to split product categories");
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "想买笔记本和防晒霜");
+        assert(debug.turnIntent.type === "multi_need", "debug intent should expose multi_need");
+        assert(debug.retrievalScope === "multi_need", "debug retrieval scope should explain why retrieval is skipped");
+      })
+    );
+
+    results.push(
       await runCase("预算继承：笔记本追加 1 万预算后只保留预算内候选", async () => {
         const conversationId = "memory-budget";
         await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本");

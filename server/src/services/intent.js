@@ -201,6 +201,16 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
 
 export async function parseTurnIntent(config, session, message) {
   const fallbackIntent = classifyTurnIntent(session, message);
+  if (
+    fallbackIntent.type === TURN_INTENTS.MISSING_CONTEXT ||
+    fallbackIntent.type === TURN_INTENTS.OUT_OF_SCOPE ||
+    fallbackIntent.type === TURN_INTENTS.MULTI_NEED
+  ) {
+    return {
+      ...fallbackIntent,
+      source: "rules"
+    };
+  }
   if (!config.llmApiKey) {
     return {
       ...fallbackIntent,

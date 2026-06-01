@@ -50,6 +50,9 @@ export const CATEGORY_HINTS = [
       "眼霜",
       "卸妆",
       "粉底",
+      "蜜粉",
+      "散粉",
+      "定妆",
       "眉笔",
       "口红",
       "唇釉",
@@ -68,11 +71,11 @@ export const CATEGORY_HINTS = [
   },
   {
     category: "服饰运动",
-    words: ["跑鞋", "跑步鞋", "篮球鞋", "徒步鞋", "运动", "外套", "穿搭", "衣服", "鞋", "服饰", "轻量", "背包", "通勤包"]
+    words: ["跑鞋", "跑步鞋", "篮球鞋", "徒步鞋", "运动", "外套", "穿搭", "衣服", "鞋", "服饰", "轻量", "背包", "通勤包", "速干", "短袖", "T恤"]
   },
   {
     category: "食品饮料",
-    words: ["食品", "零食", "饮料", "无糖", "咖啡", "茶", "牛奶", "酸奶", "生活", "厨房", "清洁"]
+    words: ["食品", "零食", "饮料", "功能饮料", "无糖", "咖啡", "茶", "牛奶", "酸奶", "方便面", "泡面", "夜宵", "生活", "厨房", "清洁"]
   }
 ];
 
@@ -82,19 +85,23 @@ export const ITEM_INTENTS = [
   { itemType: "面霜", trigger: ["面霜", "特护霜", "修复霜"], terms: ["面霜", "特护霜", "修复霜"] },
   { itemType: "面膜", trigger: ["面膜"], terms: ["面膜"] },
   { itemType: "精华", trigger: ["精华", "精华液"], terms: ["精华", "精华液"] },
+  { itemType: "蜜粉", trigger: ["蜜粉", "散粉", "定妆"], terms: ["蜜粉", "散粉", "粉饼"] },
   { itemType: "唇妆", trigger: ["口红", "唇釉", "唇膏"], terms: ["口红", "唇釉", "唇膏", "唇部彩妆"] },
   { itemType: "耳机", trigger: ["蓝牙耳机", "耳机"], terms: ["蓝牙耳机", "真无线耳机", "耳机"] },
   { itemType: "手机", trigger: ["手机"], terms: ["智能手机", "手机"] },
+  { itemType: "平板", trigger: ["平板电脑", "平板"], terms: ["平板电脑", "平板"] },
   { itemType: "笔记本", trigger: ["笔记本", "电脑", "轻薄本"], terms: ["笔记本电脑", "笔记本", "轻薄本"] },
-  { itemType: "平板", trigger: ["平板"], terms: ["平板电脑", "平板"] },
   { itemType: "跑鞋", trigger: ["跑鞋", "跑步鞋"], terms: ["跑鞋", "跑步鞋", "训练鞋"] },
   { itemType: "篮球鞋", trigger: ["篮球鞋"], terms: ["篮球鞋"] },
   { itemType: "徒步鞋", trigger: ["徒步鞋"], terms: ["徒步鞋", "户外鞋"] },
   { itemType: "鞋", trigger: ["鞋"], terms: ["跑步鞋", "跑鞋", "篮球鞋", "徒步鞋", "鞋"] },
   { itemType: "背包", trigger: ["背包", "通勤包", "双肩包"], terms: ["背包", "双肩包", "通勤包"] },
+  { itemType: "速干T恤", trigger: ["速干短袖", "速干T恤", "跑步训练"], terms: ["速干T恤", "短袖T恤", "训练短袖"] },
   { itemType: "饮料", trigger: ["饮料", "无糖饮料", "茶饮", "气泡水"], terms: ["饮料", "茶饮", "气泡水", "功能饮料", "碳酸饮料"] },
+  { itemType: "功能饮料", trigger: ["功能饮料", "补充能量"], terms: ["功能饮料", "维生素功能饮料", "能量"] },
   { itemType: "咖啡", trigger: ["咖啡"], terms: ["咖啡"] },
-  { itemType: "牛奶", trigger: ["牛奶"], terms: ["牛奶"] }
+  { itemType: "牛奶", trigger: ["牛奶"], terms: ["牛奶"] },
+  { itemType: "方便面", trigger: ["方便面", "泡面", "夜宵"], terms: ["方便面", "泡面", "杯装方便面"] }
 ];
 
 export const PREFERENCE_HINTS = [
@@ -155,6 +162,28 @@ export function tokenizeForVector(text) {
   return tokens;
 }
 
+function normalizeChinesePriceText(text) {
+  const digitMap = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10
+  };
+
+  // 用户常用“四千以内”“一万预算”这类中文金额。先归一化成阿拉伯数字，
+  // 后续预算正则就能复用同一套逻辑，避免不同写法走出不同过滤结果。
+  return String(text || "")
+    .replace(/([一二两三四五六七八九十])千/g, (_, value) => `${digitMap[value] * 1000}`)
+    .replace(/([一二两三四五六七八九十])万/g, (_, value) => `${digitMap[value]}万`);
+}
+
 function parsePriceNumber(value, unit = "") {
   const number = Number(value);
   if (!Number.isFinite(number)) return null;
@@ -162,7 +191,7 @@ function parsePriceNumber(value, unit = "") {
 }
 
 export function extractPriceConstraint(message) {
-  const normalized = String(message || "");
+  const normalized = normalizeChinesePriceText(message);
   const pricePattern = /(\d+(?:\.\d+)?)\s*(万|元)?/;
 
   const under = normalized.match(new RegExp(`${pricePattern.source}\\s*(以内|以下|内|之内|以内的|以下的|预算)`));
@@ -203,14 +232,30 @@ export function extractNegativeTerms(message) {
 }
 
 export function inferCategory(message) {
+  let best = null;
   for (const item of CATEGORY_HINTS) {
-    if (item.words.some((word) => message.includes(word))) return item.category;
+    const matchedWords = item.words.filter((word) => message.includes(word));
+    if (matchedWords.length === 0) continue;
+    const score = matchedWords.reduce((sum, word) => sum + word.length, 0);
+    if (!best || score > best.score) best = { category: item.category, score };
   }
-  return "";
+
+  // 同一句话里可能同时出现“运动”和“功能饮料”。按命中词长度/数量综合打分，
+  // 能让更具体的商品词压过宽泛场景词，减少类目跑偏。
+  return best?.category || "";
 }
 
 export function inferItemIntent(message) {
-  return ITEM_INTENTS.find((item) => item.trigger.some((word) => message.includes(word))) || null;
+  const matches = ITEM_INTENTS
+    .map((item) => {
+      const matchedTrigger = item.trigger.filter((word) => message.includes(word)).sort((a, b) => b.length - a.length)[0];
+      return matchedTrigger ? { item, score: matchedTrigger.length } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  // 优先选择更具体的触发词，例如“平板电脑”应优先于泛化的“电脑”。
+  return matches[0]?.item || null;
 }
 
 export function extractPreferences(message) {

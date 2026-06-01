@@ -95,6 +95,18 @@ async function run() {
     assert(productEvent.data.products.every((product) => product.category === "美妆护肤"), "防晒霜查询不应返回非美妆类商品");
     assert(productEvent.data.products.length <= 4, "chat should keep answer candidates and product cards aligned");
 
+    const outOfScope = await requestChat(baseUrl, "天气怎么样", "out-of-scope-demo");
+    const outOfScopeProducts = outOfScope.find((item) => item.event === "products")?.data.products || [];
+    const outOfScopeDone = outOfScope.find((item) => item.event === "done")?.data;
+    assert(outOfScopeProducts.length === 0, "out-of-scope request should not return product cards");
+    assert(outOfScopeDone.outOfScope === true, "out-of-scope request should expose done.outOfScope");
+
+    const multiNeed = await requestChat(baseUrl, "想买笔记本和防晒霜", "multi-need-boundary-demo");
+    const multiNeedProducts = multiNeed.find((item) => item.event === "products")?.data.products || [];
+    const multiNeedDone = multiNeed.find((item) => item.event === "done")?.data;
+    assert(multiNeedProducts.length === 0, "multi-need request should ask for clarification instead of mixing products");
+    assert(multiNeedDone.multiNeed === true, "multi-need request should expose done.multiNeed");
+
     const second = await requestChat(baseUrl, "再便宜点");
     const done = second.find((item) => item.event === "done");
     assert(done.data.conversationId === "smoke-demo", "done event should include conversationId");
@@ -243,6 +255,15 @@ async function run() {
     const invalidBody = await invalid.json();
     assert(invalid.status === 400, "invalid JSON should return 400");
     assert(invalidBody.error.code === "INVALID_JSON", "invalid JSON should use stable error code");
+
+    const tooLong = await fetch(`${baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: "防晒".repeat(260) })
+    });
+    const tooLongBody = await tooLong.json();
+    assert(tooLong.status === 400, "too long message should return 400 before SSE starts");
+    assert(tooLongBody.error.code === "VALIDATION_ERROR", "too long message should use stable validation error code");
 
     console.log("Smoke tests passed.");
   } finally {

@@ -8,6 +8,7 @@ import {
   extractPriceConstraint,
   inferCategory,
   inferItemIntent,
+  ITEM_INTENTS,
   PREFERENCE_HINTS
 } from "../utils/nlp.js";
 import { createSessionStore } from "./sessionStore.js";
@@ -19,6 +20,9 @@ export const TURN_INTENTS = {
   REFINE: "refine",
   REFER: "refer",
   COMPARE: "compare",
+  MISSING_CONTEXT: "missing_context",
+  OUT_OF_SCOPE: "out_of_scope",
+  MULTI_NEED: "multi_need",
   NEW_SEARCH: "new_search"
 };
 
@@ -312,6 +316,25 @@ function looksLikeReference(message) {
   return /(第[一二三四五六七八九十\d]+[个款]?|这款|这一个|这个|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第|如何|怎么样|具体看看)/.test(message);
 }
 
+function hasExplicitProductReference(message) {
+  return /(第[一二三四五六七八九十\d]+[个款]?|这款|这一个|这个|这几个|这几款|这两|刚才|上面|前面|上一轮)/.test(message);
+}
+
+function findMentionedItemTypes(message) {
+  const itemTypes = new Set();
+  for (const itemIntent of ITEM_INTENTS) {
+    if (itemIntent.trigger.some((word) => message.includes(word))) itemTypes.add(itemIntent.itemType);
+  }
+  return [...itemTypes];
+}
+
+function looksLikeMultiNeed(message) {
+  const itemTypes = findMentionedItemTypes(message);
+  // 同一句里命中两个以上商品类型，并且有“和/以及/顺便/同时”等并列信号时，先让用户拆开。
+  // 自动拆成多次检索会让一条 SSE 同时承载多套候选卡片，当前客户端展示协议还不适合这样做。
+  return itemTypes.length >= 2 && /(和|以及|还有|也想|顺便|同时|一起|跟|与|、|，)/.test(message);
+}
+
 const COMPARISON_DECISION_WORDS = [
   ...PREFERENCE_HINTS,
   "省钱",
@@ -363,6 +386,13 @@ function looksLikeCandidateMetaQuestion(message) {
   );
 }
 
+function looksLikeOutOfScope(message) {
+  // 只拦截明显非购物任务，避免误伤“送礼物/夏天用/上班通勤”这类没有明确品类但仍可能是导购需求的表达。
+  return /(天气|气温|下雨|新闻|股票|写论文|论文|作业|翻译|写代码|编程|代码报错|讲个笑话|讲故事|考试题|数学题|简历|旅游攻略)/.test(
+    message
+  );
+}
+
 function looksLikeRefinement(message, parsed) {
   return Boolean(
     Number.isFinite(parsed.price.maxPrice) ||
@@ -382,6 +412,30 @@ export function classifyTurnIntent(session, message) {
     preferences: extractPreferences(message)
   };
   const hasContext = hasReusableContext(session);
+  const hasNewSearchSignal = Boolean(parsed.category || parsed.itemIntent);
+
+  if (looksLikeMultiNeed(message)) {
+    return { type: TURN_INTENTS.MULTI_NEED, parsed, reason: "用户在同一句话中提出了多个商品品类需求" };
+  }
+
+  if (
+    !hasNewSearchSignal &&
+    looksLikeOutOfScope(message) &&
+    !hasExplicitProductReference(message) &&
+    !looksLikeComparison(message, parsed) &&
+    !looksLikeCandidateMetaQuestion(message)
+  ) {
+    // 明显非购物问题不进入 RAG 检索，避免“天气/论文/代码”等请求被误当成模糊购物需求。
+    // 但如果用户问的是“这款下雨能用吗”“第二款写代码够不够”这类仍指向商品的追问，就交给上下文链路继续处理。
+    return { type: TURN_INTENTS.OUT_OF_SCOPE, parsed, reason: "用户提出了明显非购物导购问题" };
+  }
+
+  if (!hasContext && !hasNewSearchSignal && (looksLikeReference(message) || looksLikeComparison(message, parsed) || looksLikeCandidateMetaQuestion(message))) {
+    // “第二款怎么样 / 哪个更好 / 这款呢”必须依赖上一轮候选。没有候选时不能把它误当成新品类搜索，
+    // 但“哪款防晒好”这类带明确品类/商品类型的问题仍应作为 new_search 处理。
+    // 否则系统会凭空生成一组与用户代词无关的商品，破坏多轮上下文的可信边界。
+    return { type: TURN_INTENTS.MISSING_CONTEXT, parsed, reason: "用户在没有当前候选时发起了指代或对比追问" };
+  }
 
   if (hasContext && looksLikeComparison(message, parsed)) {
     return { type: TURN_INTENTS.COMPARE, parsed, reason: "用户想比较当前候选商品的差异和适用场景" };

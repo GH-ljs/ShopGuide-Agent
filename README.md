@@ -269,6 +269,7 @@ cd server
 npm run test:answer
 npm run test:retrieval
 npm run test:retrieval-quality
+npm run eval:retrieval
 npm run test:embedding
 npm run test:performance
 npm run test:session
@@ -288,6 +289,7 @@ node src/__tests__/memory-eval.test.js
 
 - 修改回答、Prompt 或对比逻辑：跑 `test:answer`。
 - 修改检索、过滤或排序：跑 `test:retrieval-quality`。
+- 需要汇报 RAG 量化效果：跑 `eval:retrieval`，它会基于 `server/src/eval/retrieval-cases.json` 输出 `Recall@K`、`Precision@K`、`HitRate@K` 和 `MRR@K`。
 - 修改多轮记忆、指代、预算、对比：跑 `memory-eval.test.js` 和 `intent.test.js`。
 - 修改缓存或性能逻辑：跑 `test:performance`。
 - 修改 `deviceId`、会话隔离或持久化：跑 `test:session`。

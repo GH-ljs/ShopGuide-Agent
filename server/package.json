@@ -10,6 +10,7 @@
     "test:embedding": "node src/__tests__/embedding.test.js",
     "test:retrieval": "node src/__tests__/retrieval.test.js",
     "test:retrieval-quality": "node src/__tests__/retrieval-quality.test.js",
+    "eval:retrieval": "node src/scripts/eval-retrieval.js",
     "test:performance": "node src/__tests__/performance.test.js",
     "test:session": "node src/__tests__/session-persistence.test.js",
     "test:fallback": "node src/__tests__/fallback.test.js",

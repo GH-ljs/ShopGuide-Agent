@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 fun InputBar(
     value: String,
     enabled: Boolean,
+    maxChars: Int = 500,
     onValueChange: (String) -> Unit,
     onInputFocusChanged: (Boolean) -> Unit,
     onSend: () -> Unit
@@ -40,9 +41,12 @@ fun InputBar(
                 // 由父组件记录输入框焦点，比单纯读键盘高度更可靠；很多机型键盘动画期间 inset 更新会滞后。
                 .onFocusChanged { state -> onInputFocusChanged(state.isFocused) },
             value = value,
-            onValueChange = onValueChange,
+            // 端侧先截断超长输入，避免用户误粘贴大段文本导致请求体、模型上下文和 UI 渲染都被拖慢。
+            // 后端仍会做同样长度校验，防止旧客户端或脚本绕过客户端限制。
+            onValueChange = { next -> onValueChange(next.take(maxChars)) },
             enabled = enabled,
             placeholder = { Text("输入你的购物需求") },
+            supportingText = { Text("${value.length}/$maxChars") },
             singleLine = false,
             maxLines = 3
         )

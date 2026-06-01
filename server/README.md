@@ -174,6 +174,9 @@ SESSION_STORE_PATH=.data/shopguide_sessions.db
 | `refine` | 在当前需求上追加条件 | `1万预算`、`再便宜点`、`不要含酒精` |
 | `refer` | 指向上一轮某个商品 | `第二款怎么样`、`安热沙这款如何` |
 | `compare` | 比较候选商品 | `2和3哪个好`、`前两款对比一下` |
+| `missing_context` | 没有候选时的指代/对比追问 | 新会话直接问 `第二款怎么样` |
+| `out_of_scope` | 明显非购物导购问题 | `天气怎么样`、`帮我写论文` |
+| `multi_need` | 同一句话里包含多个商品品类 | `想买笔记本和防晒霜` |
 
 多轮记忆由 `memory.js` 维护，主要保存最近对话、当前需求、历史需求摘要、上一轮候选商品和对比中的商品组。这样可以支持“先问笔记本 -> 加预算 -> 切到防晒 -> 再回问刚才笔记本第三款”这类真实导购路径。
 
@@ -193,7 +196,7 @@ SESSION_STORE_PATH=.data/shopguide_sessions.db
 
 后端不会直接执行原始 Plan，而是先做 Validator 校验：
 
-- `turn_type` 只能是 `new_search / refine / refer / compare`。
+- `turn_type` 只能是 `new_search / refine / refer / compare / missing_context / out_of_scope / multi_need`。
 - `scope` 只能落在允许范围内，`compare/refer` 不能被扩大到全库。
 - `target_refs` 必须指向当前候选中真实存在的序号。
 - 预算、排除词只有在用户本轮明确提到价格或否定表达时才会变成硬约束。
@@ -253,6 +256,24 @@ server/
 
 健康检查，返回商品数量、向量库、Embedding、聊天模型和热门缓存状态。
 
+演示或排障时优先看这个接口：
+
+```powershell
+Invoke-WebRequest -UseBasicParsing http://localhost:3001/api/health
+```
+
+重点字段：
+
+- `ok`：后端 HTTP 服务是否正常响应。
+- `productCount`：商品库是否成功加载。
+- `vectorStore` / `embeddingProvider` / `embeddingDimension`：当前检索模式和 embedding 维度。
+- `qdrantCollection`：使用 Qdrant 时确认 collection 是否和 embedding 方案匹配。
+- `modelEnabled` / `llmProvider` / `llmModel`：聊天模型是否启用。
+- `sessionPersistence`：会话记忆持久化使用 SQLite、JSON 还是 disabled。
+- `hotQueryCache`：热门查询缓存是否启用以及当前统计。
+
+`/api/health` 只说明后端启动和配置状态，不等价于完整 RAG 质量检查。推荐再配合 `/api/debug/retrieve` 或自动化测试验证检索和回答链路。
+
 ### GET `/api/performance`
 
 返回热门查询缓存统计，例如 `size / hits / misses / writes / ttlMs`。该接口面向开发和评测，不建议直接展示给普通用户。
@@ -289,7 +310,7 @@ server/
 
 - `deviceId`：匿名设备 ID，用于后端隔离和持久化不同设备的会话；旧客户端不传时默认为 `anonymous`。
 - `conversationId`：会话 ID，和 `deviceId` 组合后定位一段后端会话记忆。
-- `message`：用户本轮输入。
+- `message`：用户本轮输入，最长 500 字。超长文本会返回 `VALIDATION_ERROR`，避免长粘贴内容拖慢 Prompt、检索和流式返回。
 - `limit`：本轮最多返回多少个商品候选，服务端仍有上限保护。
 - `history`：客户端最近历史，用于数据库不可用或旧数据缺失时兜底恢复上下文。
 
@@ -315,6 +336,16 @@ data: {"ok":true,"conversationId":"demo","deviceId":"demo-device","fallback":tru
 ```
 
 只有检索失败、请求参数错误、内部异常等无法得到可信商品候选的情况，才会返回 `error` 事件。
+
+如果用户在没有任何候选上下文时直接问“第二款怎么样”“2 和 3 哪个好”，后端会返回普通 `token` 文本解释缺少参照，不会触发商品检索，也不会返回商品卡片：
+
+```text
+我还没有可参考的候选商品，所以暂时无法判断“第二款怎么样”指的是哪一款。
+```
+
+这个边界由 `missing_context` 意图处理，避免把代词/序号追问误当成新的商品搜索。
+如果新会话里提出明显非购物问题，例如“天气怎么样”“帮我写论文”，会被归为 `out_of_scope`，后端只返回边界说明，不检索商品，也不展示商品卡片。
+如果同一句话里混入多个商品品类，例如“想买笔记本和防晒霜”，会被归为 `multi_need`。当前一轮对话只返回一组候选卡片，所以后端会先提示用户拆开需求，避免把不同品类混成一组推荐。
 
 ### POST `/api/debug/retrieve`
 
@@ -349,7 +380,7 @@ data: {"ok":true,"conversationId":"demo","deviceId":"demo-device","fallback":tru
 
 | 错误码 | 代表含义 |
 | --- | --- |
-| `VALIDATION_ERROR` | 请求参数不合法，例如 `message` 为空 |
+| `VALIDATION_ERROR` | 请求参数不合法，例如 `message` 为空或超过 500 字 |
 | `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant、Embedding 或向量索引异常 |
 | `MODEL_ERROR` | 模型生成失败，例如 API Key、模型名、权限或网络问题；当前聊天主链路会优先自动降级，通常以 `meta type=fallback` 形式通知客户端 |
 | `NOT_FOUND` | 商品、图片或接口不存在 |
@@ -375,6 +406,7 @@ data: {"ok":true,"conversationId":"demo","deviceId":"demo-device","fallback":tru
 npm run test:answer
 npm run test:retrieval
 npm run test:retrieval-quality
+npm run eval:retrieval
 npm run test:embedding
 npm run test:performance
 npm run test:session
@@ -395,8 +427,11 @@ node src/__tests__/memory-eval.test.js
 ```bash
 npm run test:answer
 npm run test:retrieval-quality
+npm run eval:retrieval
 npm run test:smoke
 ```
+
+`test:retrieval-quality` 是回归测试，重点检查类目、预算、排除词、商品类型等硬边界是否跑偏；`eval:retrieval` 是量化评测，读取 `src/eval/retrieval-cases.json` 中人工标注的相关商品集合，输出 `Recall@K`、`Precision@K`、`HitRate@K` 和 `MRR@K`。前者更适合防回归，后者更适合答辩或报告里展示 RAG 检索效果。
 
 如果改动了 `memory.js`、`intent.js`、`retriever.js` 或对比卡逻辑，再跑：
 

@@ -34,6 +34,7 @@ import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services
 
 const DEFAULT_CHAT_PRODUCT_LIMIT = 4;
 const MAX_CHAT_PRODUCT_LIMIT = 8;
+const MAX_MESSAGE_LENGTH = 500;
 const hotQueryCache = createHotQueryCache({
   maxEntries: Number(process.env.HOT_QUERY_CACHE_MAX_ENTRIES || 80),
   ttlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000)
@@ -83,6 +84,28 @@ function parsedRetrievalInput(turnIntent) {
     inferredCategory: parsed.category || "",
     itemIntent: parsed.itemIntent || null
   };
+}
+
+function buildMissingContextAnswer(message) {
+  return [
+    `我还没有可参考的候选商品，所以暂时无法判断“${message}”指的是哪一款。`,
+    "你可以先说一个完整需求，比如“推荐一款适合油皮的防晒霜”或“想买一台办公轻薄笔记本”。",
+    "等我给出候选后，再问“第二款怎么样”“2 和 3 哪个好”就能继续沿用上下文。"
+  ].join("\n");
+}
+
+function buildOutOfScopeAnswer(message) {
+  return [
+    `我主要负责商品导购，暂时不能处理“${message}”这类非购物问题。`,
+    "你可以告诉我想买什么品类、预算、使用场景或偏好，比如“推荐一款通勤背包”或“想买一台办公轻薄笔记本”。"
+  ].join("\n");
+}
+
+function buildMultiNeedAnswer() {
+  return [
+    "你这句话里同时包含了多个商品需求，我建议先拆开聊，这样每轮推荐和商品卡片会更准确。",
+    "可以先选一个品类开始，比如“先推荐办公轻薄笔记本”，之后再问“再推荐防晒霜”。"
+  ].join("\n");
 }
 
 async function streamText(res, text, onFirstToken = null) {
@@ -139,6 +162,11 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
   const message = String(body.message || "").trim();
   if (!message) {
     sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
+    return;
+  }
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    // 长文本会显著放大 Prompt 和检索噪声；后端在可信边界再次校验，避免客户端被绕过后拖慢主链路。
+    sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, `需求描述太长，请控制在 ${MAX_MESSAGE_LENGTH} 字以内`));
     return;
   }
 
@@ -207,6 +235,60 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     }
 
     const turnIntent = await parseTurnIntent(config, session, message);
+    if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
+      const answerText = buildMultiNeedAnswer();
+
+      // 当前客户端一轮只展示一组候选卡片；多品类混合输入先澄清，避免把两套检索结果揉成一组不可信推荐。
+      await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
+      appendTurn(session, "user", message);
+      appendTurn(session, "assistant", answerText);
+      persistSession(session);
+      writeSse(res, "products", { products: [] });
+      writeSse(res, "done", {
+        ok: true,
+        conversationId,
+        deviceId,
+        multiNeed: true
+      });
+      return;
+    }
+    if (turnIntent.type === TURN_INTENTS.OUT_OF_SCOPE) {
+      const answerText = buildOutOfScopeAnswer(message);
+
+      // 明显非购物请求不更新导购需求，也不触发检索，避免把“天气/论文/代码”等内容写进商品记忆。
+      await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
+      appendTurn(session, "user", message);
+      appendTurn(session, "assistant", answerText);
+      persistSession(session);
+      writeSse(res, "products", { products: [] });
+      writeSse(res, "done", {
+        ok: true,
+        conversationId,
+        deviceId,
+        outOfScope: true
+      });
+      return;
+    }
+    if (turnIntent.type === TURN_INTENTS.MISSING_CONTEXT) {
+      const answerText = buildMissingContextAnswer(message);
+      const state = updateSessionState(session, message, turnIntent.parsed);
+      void state;
+
+      // 缺少候选上下文时直接解释边界，不进入全库检索。这样“第二款怎么样”不会被误当成新搜索，
+      // 也不会产生与用户代词无关的商品卡片。
+      await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
+      appendTurn(session, "user", message);
+      appendTurn(session, "assistant", answerText);
+      persistSession(session);
+      writeSse(res, "products", { products: [] });
+      writeSse(res, "done", {
+        ok: true,
+        conversationId,
+        deviceId,
+        missingContext: true
+      });
+      return;
+    }
     if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
       resetSessionStateForNewSearch(session);
     } else {
@@ -436,12 +518,87 @@ function installRoutes(app, { config, products, vectorIndex }) {
     try {
       const message = String(req.body?.message || "").trim();
       if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
+      if (message.length > MAX_MESSAGE_LENGTH) {
+        return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, `需求描述太长，请控制在 ${MAX_MESSAGE_LENGTH} 字以内`));
+      }
 
       const conversationId = String(req.body?.conversationId || "debug").trim() || "debug";
       const deviceId = resolveRequestDeviceId(req.body);
       const includeMemory = req.body?.includeMemory !== false;
       const session = includeMemory ? getSession(conversationId, deviceId) : resetSession(`debug:${conversationId}:${Date.now()}`, deviceId);
       const turnIntent = await parseTurnIntent(config, session, message);
+      if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
+        return sendJson(res, 200, {
+          ok: true,
+          deviceId,
+          conversationId,
+          includeMemory,
+          turnIntent,
+          retrievalScope: "multi_need",
+          session: snapshotSession(session),
+          originalMessage: message,
+          retrievalQuery: "",
+          retrieval: {
+            products: [],
+            counts: {
+              totalProducts: products.length,
+              filteredCandidates: 0,
+              returned: 0
+            },
+            parsed: parsedRetrievalInput(turnIntent),
+            usedVectorStore: false,
+            note: "multi-need intent asks the user to split product categories before retrieval"
+          }
+        });
+      }
+      if (turnIntent.type === TURN_INTENTS.OUT_OF_SCOPE) {
+        return sendJson(res, 200, {
+          ok: true,
+          deviceId,
+          conversationId,
+          includeMemory,
+          turnIntent,
+          retrievalScope: "out_of_scope",
+          session: snapshotSession(session),
+          originalMessage: message,
+          retrievalQuery: "",
+          retrieval: {
+            products: [],
+            counts: {
+              totalProducts: products.length,
+              filteredCandidates: 0,
+              returned: 0
+            },
+            parsed: parsedRetrievalInput(turnIntent),
+            usedVectorStore: false,
+            note: "out of scope intent does not run retrieval"
+          }
+        });
+      }
+      if (turnIntent.type === TURN_INTENTS.MISSING_CONTEXT) {
+        return sendJson(res, 200, {
+          ok: true,
+          deviceId,
+          conversationId,
+          includeMemory,
+          turnIntent,
+          retrievalScope: "missing_context",
+          session: snapshotSession(session),
+          originalMessage: message,
+          retrievalQuery: "",
+          retrieval: {
+            products: [],
+            counts: {
+              totalProducts: products.length,
+              filteredCandidates: 0,
+              returned: 0
+            },
+            parsed: parsedRetrievalInput(turnIntent),
+            usedVectorStore: false,
+            note: "missing context intent does not run retrieval"
+          }
+        });
+      }
       if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
         resetSessionStateForNewSearch(session);
       } else {

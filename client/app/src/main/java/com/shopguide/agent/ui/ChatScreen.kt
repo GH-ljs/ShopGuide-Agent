@@ -79,6 +79,7 @@ import kotlinx.coroutines.withContext
 
 private const val LOADING_TEXT = "正在检索商品并生成回答..."
 private const val MAX_HISTORY_MESSAGES_FOR_REQUEST = 8
+private const val MAX_MESSAGE_CHARS = 500
 
 @Composable
 fun ChatScreen() {
@@ -490,6 +491,7 @@ fun ChatScreen() {
             InputBar(
                 value = input,
                 enabled = !isStreaming,
+                maxChars = MAX_MESSAGE_CHARS,
                 onValueChange = { input = it },
                 onInputFocusChanged = { focused -> isInputFocused = focused },
                 onSend = { sendMessage(input) }
