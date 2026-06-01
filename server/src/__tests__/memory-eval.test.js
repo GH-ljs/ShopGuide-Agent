@@ -251,7 +251,7 @@ async function run() {
     );
 
     results.push(
-      await runCase("对比后偏好：我想更健康应沿用上一轮对比卡片", async () => {
+      await runCase("对比后偏好：更健康追问应沿用上一轮对比卡片", async () => {
         const conversationId = "memory-healthy-decision";
         const setup = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
         assert(setup.products.length >= 5, "healthy decision setup should keep at least five beverage candidates");
@@ -267,6 +267,37 @@ async function run() {
         assert(healthy.comparison?.columns?.length === 2, "health preference should emit comparison component data");
         assert(healthy.tokenText.includes("明确结论"), "health preference should give a decision answer");
         assert(healthy.tokenText.includes("健康"), "health preference should explain the health-oriented focus");
+
+        const healthyQuestion = await chat(baseUrl, conversationId, "哪个更健康", 6);
+        assert(healthyQuestion.products.length === 2, "哪个更健康 should keep the compared pair instead of all original candidates");
+        assert(healthyQuestion.products[0].productId === compared.products[0].productId, "哪个更健康 should keep compared product 1");
+        assert(healthyQuestion.products[1].productId === compared.products[1].productId, "哪个更健康 should keep compared product 2");
+        assert(healthyQuestion.comparison?.columns?.length === 2, "哪个更健康 should emit comparison component data");
+
+        const colloquialHealthy = await chat(baseUrl, conversationId, "哪个健康些", 6);
+        assert(colloquialHealthy.products.length === 2, "哪个健康些 should keep the compared pair instead of all original candidates");
+        assert(colloquialHealthy.products[0].productId === compared.products[0].productId, "哪个健康些 should keep compared product 1");
+        assert(colloquialHealthy.products[1].productId === compared.products[1].productId, "哪个健康些 should keep compared product 2");
+        assert(colloquialHealthy.comparison?.columns?.length === 2, "哪个健康些 should emit comparison component data");
+      })
+    );
+
+    results.push(
+      await runCase("对比后维度追问：控油清爽舒适等偏好词不应重新扩大候选", async () => {
+        const conversationId = "memory-preference-decision";
+        const setup = await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        assert(setup.products.length >= 3, "preference decision setup should keep at least three candidates");
+
+        const compared = await chat(baseUrl, conversationId, "比较2和3", 6);
+        assert(compared.products.length === 2, "setup comparison should return two products");
+
+        for (const message of ["哪个控油些", "哪款更清爽", "谁更舒适"]) {
+          const decision = await chat(baseUrl, conversationId, message, 6);
+          assert(decision.products.length === 2, `${message} should keep the compared pair instead of all original candidates`);
+          assert(decision.products[0].productId === compared.products[0].productId, `${message} should keep compared product 1`);
+          assert(decision.products[1].productId === compared.products[1].productId, `${message} should keep compared product 2`);
+          assert(decision.comparison?.columns?.length === 2, `${message} should emit comparison component data`);
+        }
       })
     );
 

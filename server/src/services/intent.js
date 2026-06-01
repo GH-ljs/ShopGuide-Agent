@@ -7,6 +7,7 @@ import { classifyTurnIntent, snapshotSession, TURN_INTENTS } from "./memory.js";
 
 const VALID_TURN_TYPES = new Set(Object.values(TURN_INTENTS));
 const VALID_CATEGORIES = new Set(CATEGORY_HINTS.map((item) => item.category));
+const VALID_SCOPES = new Set(["full_catalog", "current_need", "last_products", "last_compared_products", "referenced_products"]);
 
 function normalizeString(value) {
   return String(value || "").trim();
@@ -21,6 +22,13 @@ function normalizeNumber(value) {
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => normalizeString(item)).filter(Boolean);
+}
+
+function normalizeNumberArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item > 0);
 }
 
 function findItemIntent(itemType) {
@@ -73,10 +81,11 @@ function buildIntentParserMessages(session, message, fallbackIntent) {
       content: [
         "你是电商导购 Agent 的意图解析器，只输出 JSON，不输出解释。",
         "你的任务是理解用户本轮话的真实含义，例如“太便宜了”表示想提高价位，“便宜点”表示想降低价位，“1万预算”表示 max_price=10000。",
-        "你只负责解析，不负责推荐商品；商品是否符合条件必须交给后端检索和硬过滤。",
+        "你只负责解析和规划，不负责推荐商品；商品是否符合条件必须交给后端检索和硬过滤。",
         "字段：turn_type 只能是 new_search/refine/refer/compare；category、item_type 使用已有商品库里的中文类目和商品类型；price_direction 只能是 lower/higher/none。",
+        "scope 只能是 full_catalog/current_need/last_products/last_compared_products/referenced_products；target_refs 是用户明确提到的候选序号，如“2和5”输出 [2,5]。",
         "如果用户只是问第几款或刚才那款，turn_type=refer；如果在比较当前候选的区别、优缺点、哪个更适合，turn_type=compare；如果换了新品类或新商品类型，turn_type=new_search；如果在上一轮需求上加预算、偏好、排除条件，turn_type=refine。",
-        "输出 JSON 结构：{\"turn_type\":\"refine\",\"category\":\"\",\"item_type\":\"\",\"max_price\":null,\"min_price\":null,\"price_direction\":\"none\",\"negative_terms\":[],\"preferences\":[],\"refer_index\":null,\"reason\":\"\"}"
+        "输出 JSON 结构：{\"turn_type\":\"refine\",\"scope\":\"current_need\",\"target_refs\":[],\"focus\":[],\"category\":\"\",\"item_type\":\"\",\"max_price\":null,\"min_price\":null,\"price_direction\":\"none\",\"negative_terms\":[],\"preferences\":[],\"reason\":\"\"}"
       ].join("\n")
     },
     {
@@ -103,26 +112,77 @@ function buildIntentParserMessages(session, message, fallbackIntent) {
   ];
 }
 
-function mergeModelIntent(modelJson, fallbackIntent, message) {
+function mergeModelIntent(modelJson, fallbackIntent, message, session) {
+  const rawPlan = modelJson?.plan && typeof modelJson.plan === "object" ? modelJson.plan : modelJson || {};
+  const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
   const turnType =
     fallbackIntent.type === TURN_INTENTS.REFER
       ? TURN_INTENTS.REFER
-      : VALID_TURN_TYPES.has(modelJson?.turn_type)
-        ? modelJson.turn_type
+      : VALID_TURN_TYPES.has(rawPlan?.turn_type || rawPlan?.intent)
+        ? rawPlan.turn_type || rawPlan.intent
         : fallbackIntent.type;
-  const category = VALID_CATEGORIES.has(modelJson?.category) ? modelJson.category : fallbackIntent.parsed.category;
-  const itemIntent = findItemIntent(modelJson?.item_type) || fallbackIntent.parsed.itemIntent || null;
+  const protectedTurnType = fallbackIntent.type === TURN_INTENTS.COMPARE ? TURN_INTENTS.COMPARE : turnType;
+  const canAcceptModelCatalogScope = protectedTurnType === TURN_INTENTS.NEW_SEARCH || protectedTurnType === TURN_INTENTS.REFINE;
+  const category =
+    canAcceptModelCatalogScope && VALID_CATEGORIES.has(rawPlan?.category)
+      ? rawPlan.category
+      : fallbackIntent.parsed.category;
+  const itemIntent = canAcceptModelCatalogScope
+    ? findItemIntent(rawPlan?.item_type) || fallbackIntent.parsed.itemIntent || null
+    : fallbackIntent.parsed.itemIntent || null;
   const canUseModelPrice = hasPriceSignal(message);
-  const maxPrice = canUseModelPrice ? normalizeNumber(modelJson?.max_price) : null;
-  const minPrice = canUseModelPrice ? normalizeNumber(modelJson?.min_price) : null;
-  const priceDirection = canUseModelPrice && ["lower", "higher"].includes(modelJson?.price_direction) ? modelJson.price_direction : "none";
-  const modelNegativeTerms = hasNegativeSignal(message) ? normalizeStringArray(modelJson?.negative_terms) : [];
-  const modelPreferences = normalizeStringArray(modelJson?.preferences);
+  const maxPrice = canUseModelPrice ? normalizeNumber(rawPlan?.max_price ?? rawPlan?.hard_filters?.max_price) : null;
+  const minPrice = canUseModelPrice ? normalizeNumber(rawPlan?.min_price ?? rawPlan?.hard_filters?.min_price) : null;
+  const priceDirection = canUseModelPrice && ["lower", "higher"].includes(rawPlan?.price_direction) ? rawPlan.price_direction : "none";
+  const modelNegativeTerms = hasNegativeSignal(message) ? normalizeStringArray(rawPlan?.negative_terms ?? rawPlan?.hard_filters?.negative_terms) : [];
+  const modelPreferences = normalizeStringArray(rawPlan?.preferences ?? rawPlan?.soft_preferences);
+  const focus = normalizeStringArray(rawPlan?.focus);
+  const targetRefs = normalizeNumberArray(rawPlan?.target_refs).filter((index) => index <= referenceProducts.length);
+  const requestedScope = normalizeString(rawPlan?.scope);
+  const fallbackScope =
+    fallbackIntent.type === TURN_INTENTS.NEW_SEARCH
+      ? "full_catalog"
+      : fallbackIntent.type === TURN_INTENTS.COMPARE
+        ? "last_compared_products"
+        : fallbackIntent.type === TURN_INTENTS.REFER
+          ? "referenced_products"
+          : "current_need";
+  const modelScope = VALID_SCOPES.has(requestedScope) ? requestedScope : fallbackScope;
+  const scope =
+    protectedTurnType === TURN_INTENTS.NEW_SEARCH
+      ? "full_catalog"
+      : protectedTurnType === TURN_INTENTS.REFER
+        ? "referenced_products"
+        : protectedTurnType === TURN_INTENTS.COMPARE
+          ? modelScope === "full_catalog"
+            ? fallbackScope
+            : modelScope
+          : modelScope;
 
   return {
-    type: turnType,
+    type: protectedTurnType,
     source: "llm",
-    reason: normalizeString(modelJson?.reason) || fallbackIntent.reason,
+    reason: normalizeString(rawPlan?.reason) || fallbackIntent.reason,
+    plan: {
+      intent: protectedTurnType,
+      scope,
+      targetRefs,
+      focus,
+      // 这份 plan 是 LLM 原始理解经过后端 Validator 后的安全版本。
+      // 预算和排除词只有在用户本轮真的出现价格/否定信号时才会进入 hardFilters，避免模型凭空加硬约束。
+      hardFilters: {
+        maxPrice: maxPrice ?? fallbackIntent.parsed.price?.maxPrice ?? null,
+        minPrice: minPrice ?? fallbackIntent.parsed.price?.minPrice ?? null,
+        negativeTerms: modelNegativeTerms.length ? modelNegativeTerms : fallbackIntent.parsed.negativeTerms
+      },
+      softPreferences: modelPreferences.length ? modelPreferences : fallbackIntent.parsed.preferences,
+      validator: {
+        priceAccepted: canUseModelPrice,
+        negativeTermsAccepted: hasNegativeSignal(message),
+        fallbackType: fallbackIntent.type,
+        targetRefsAccepted: targetRefs.length === normalizeNumberArray(rawPlan?.target_refs).length
+      }
+    },
     parsed: {
       category,
       itemIntent,
@@ -154,7 +214,7 @@ export async function parseTurnIntent(config, session, message) {
     });
     const modelJson = extractJsonObject(content);
     if (!modelJson) throw new Error("intent parser returned empty JSON");
-    return mergeModelIntent(modelJson, fallbackIntent, message);
+    return mergeModelIntent(modelJson, fallbackIntent, message, session);
   } catch (error) {
     // 解析层失败不能中断导购主链路：后端规则兜底虽然不如 LLM 灵活，但可测试、可复现，
     // 能保证“用户输入 -> 检索 -> 回答 -> 卡片”的最小闭环继续工作。

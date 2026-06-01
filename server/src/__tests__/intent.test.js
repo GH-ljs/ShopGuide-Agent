@@ -61,9 +61,11 @@ async function run() {
     const llmSession = resetSession("intent-llm-normalize-test");
     const llmIntent = await parseTurnIntent(mockConfig, llmSession, "想买一台办公用轻薄笔记本");
     assert(llmIntent.source === "llm", "mocked parser should exercise LLM intent path");
+    assert(llmIntent.plan.scope === "full_catalog", "new search plan should be constrained to full catalog scope");
     assert(llmIntent.parsed.itemIntent?.itemType === "笔记本", "LLM item_type should normalize to catalog item intent");
     assert(!Number.isFinite(llmIntent.parsed.price.maxPrice), "LLM should not invent a hard budget without price signal");
     assert(llmIntent.parsed.negativeTerms.length === 0, "LLM should not invent negative filters without negative signal");
+    assert(llmIntent.plan.hardFilters.negativeTerms.length === 0, "validated plan should drop hallucinated negative filters");
 
     globalThis.fetch = async () => ({
       ok: true,
@@ -90,6 +92,60 @@ async function run() {
     const nullPriceIntent = await parseTurnIntent(mockConfig, llmSession, "预算多少合适");
     assert(nullPriceIntent.parsed.price.maxPrice !== 0, "LLM null max_price should not become 0");
     assert(nullPriceIntent.parsed.price.minPrice !== 0, "LLM null min_price should not become 0");
+
+    const guardedSession = resetSession("intent-plan-validator-test");
+    guardedSession.lastProducts = [
+      { productId: "a", title: "候选1", category: "美妆护肤", subCategory: "防晒", basePrice: 100 },
+      { productId: "b", title: "候选2", category: "美妆护肤", subCategory: "防晒", basePrice: 120 }
+    ];
+    guardedSession.referenceProducts = guardedSession.lastProducts;
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "refine",
+                scope: "full_catalog",
+                target_refs: [1, 9],
+                focus: ["控油"],
+                preferences: ["控油"]
+              })
+            }
+          }
+        ]
+      })
+    });
+    const comparePlanIntent = await parseTurnIntent(mockConfig, guardedSession, "哪个控油些");
+    assert(comparePlanIntent.type === TURN_INTENTS.COMPARE, "rule-confirmed comparison should not be downgraded by LLM plan");
+    assert(comparePlanIntent.plan.scope !== "full_catalog", "comparison plan should not be allowed to expand to full catalog");
+    assert(comparePlanIntent.plan.targetRefs.length === 1, "validator should drop target refs outside current candidates");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "new_search",
+                scope: "full_catalog",
+                category: "数码电子",
+                item_type: "手机"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const referPlanIntent = await parseTurnIntent(mockConfig, guardedSession, "第二款怎么样");
+    assert(referPlanIntent.type === TURN_INTENTS.REFER, "refer intent should not be upgraded to new search by LLM plan");
+    assert(referPlanIntent.plan.scope === "referenced_products", "refer plan should stay inside referenced products");
+    assert(!referPlanIntent.parsed.category, "refer validator should ignore hallucinated category from LLM plan");
+    assert(!referPlanIntent.parsed.itemIntent, "refer validator should ignore hallucinated item type from LLM plan");
   } finally {
     globalThis.fetch = originalFetch;
   }

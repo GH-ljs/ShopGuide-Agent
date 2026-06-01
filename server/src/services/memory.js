@@ -7,7 +7,8 @@ import {
   extractPreferences,
   extractPriceConstraint,
   inferCategory,
-  inferItemIntent
+  inferItemIntent,
+  PREFERENCE_HINTS
 } from "../utils/nlp.js";
 
 const MAX_TURNS = 6;
@@ -214,11 +215,40 @@ function looksLikeReference(message) {
   return /(第[一二三四五六七八九十\d]+[个款]?|这款|这一个|这个|这几个|这几款|这两|刚才|上面|前面|上一轮|哪个|哪款|哪一个|对比|比较|不要第|去掉第|如何|怎么样|具体看看)/.test(message);
 }
 
-function looksLikeComparison(message) {
+const COMPARISON_DECISION_WORDS = [
+  ...PREFERENCE_HINTS,
+  "省钱",
+  "划算",
+  "性价比",
+  "自然",
+  "安全",
+  "低负担",
+  "防晒力",
+  "性能",
+  "音质",
+  "便携"
+];
+
+function looksLikePreferenceDecision(message, parsed = {}) {
+  const preferenceWords = [...new Set([...(parsed.preferences || []), ...COMPARISON_DECISION_WORDS])].filter(Boolean);
+  const hasPreferenceWord = preferenceWords.some((word) => message.includes(word));
+  if (!hasPreferenceWord) return false;
+
+  const hasChoiceSubject = /(哪个|哪款|哪一个|谁|选哪|怎么选)/.test(message);
+  const hasComparativeTone = /(更|些|一点|点|好|适合|推荐)/.test(message);
+
+  // 这类句子不是新筛选，而是在当前候选里按某个维度做取舍：
+  // “哪个控油些 / 哪款更清爽 / 谁更舒适 / 哪个更适合通勤”都应继续走 compare。
+  // 维度词来自偏好词表和少量通用取舍词，避免后续每出现一个“健康/控油/舒适”都写一次特判。
+  return hasChoiceSubject && hasComparativeTone;
+}
+
+function looksLikeComparison(message, parsed = {}) {
   // 对比类问题讨论的是“当前候选之间的差异和取舍”，不是重新从全库找商品。
   // 单独拆成 compare 意图后，后续回答层可以输出更稳定的结构化对比，而不是普通推荐列表。
   return (
-    /(对比|比较|区别|差别|不同|哪个更|哪款更|哪一个更|哪个好|哪款好|哪一个好|怎么选|选哪个|更适合|更健康|健康点|优缺点|利弊)/.test(message) ||
+    /(对比|比较|区别|差别|不同|哪个更|哪款更|哪一个更|哪个好|哪款好|哪一个好|怎么选|选哪个|更适合|更健康|健康点|健康些|健康一点|哪个健康|哪款健康|哪一个健康|更天然|天然些|优缺点|利弊)/.test(message) ||
+    looksLikePreferenceDecision(message, parsed) ||
     /([一二两三四五六七八九十]|\d+)\s*(?:和|跟|与|、|,|，)\s*([一二两三四五六七八九十]|\d+)\s*(?:如何|怎么样|呢)?/.test(message)
   );
 }
@@ -251,7 +281,7 @@ export function classifyTurnIntent(session, message) {
   };
   const hasContext = hasReusableContext(session);
 
-  if (hasContext && looksLikeComparison(message)) {
+  if (hasContext && looksLikeComparison(message, parsed)) {
     return { type: TURN_INTENTS.COMPARE, parsed, reason: "用户想比较当前候选商品的差异和适用场景" };
   }
 
@@ -486,7 +516,12 @@ export function resolveComparisonProducts(session, message) {
     return session.lastProducts.slice(0, 2);
   }
 
-  if (/(选哪个|哪个好|哪款好|哪个更|哪款更|更适合|更推荐|更健康|健康点)/.test(message) && session.lastProducts?.length >= 2 && session.lastProducts.length < referenceProducts.length) {
+  if (
+    (/(选哪个|哪个好|哪款好|哪个更|哪款更|更适合|更推荐|更健康|健康点|健康些|健康一点|哪个健康|哪款健康|哪一个健康|更天然|天然些)/.test(message) ||
+      looksLikePreferenceDecision(message, { preferences: extractPreferences(message) })) &&
+    session.lastProducts?.length >= 2 &&
+    session.lastProducts.length < referenceProducts.length
+  ) {
     // 用户在对比之后补充“我主要通勤，选哪个”时，虽然没有说“这两款”，真实参照物仍是上一轮对比集合。
     // 这里优先沿用更窄的 lastProducts，让决策建议只在刚比较过的商品之间产生。
     return session.lastProducts;

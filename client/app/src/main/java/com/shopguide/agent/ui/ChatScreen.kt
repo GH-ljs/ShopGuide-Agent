@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -402,7 +403,12 @@ fun ChatScreen() {
             )
         }
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // 模拟器和真机的状态栏/刘海高度可能不同，主聊天页需要主动避开系统顶部区域。
+                .statusBarsPadding()
+        ) {
             Header(
                 isStreaming = isStreaming,
                 onOpenMenu = { scope.launch { drawerState.open() } }
@@ -532,6 +538,8 @@ private fun ConversationDrawer(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                // 抽屉同样从屏幕顶部展开，补上状态栏安全区，避免标题贴到系统栏下方。
+                .statusBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 22.dp)
         ) {
             DrawerHeader()
