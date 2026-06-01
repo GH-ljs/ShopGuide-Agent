@@ -15,6 +15,7 @@ node_modules/
 dist/
 build/
 qdrant_storage/
+server/.data/
 .DS_Store
 Thumbs.db
 

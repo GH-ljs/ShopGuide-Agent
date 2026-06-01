@@ -32,7 +32,9 @@ async function createTestServer() {
     arkApiKey: "",
     deepseekApiKey: "",
     llmApiKey: "",
-    vectorStore: "local"
+    vectorStore: "local",
+    // 记忆评测使用固定 conversationId。这里禁用持久化，避免本地 .env 的 SQLite 旧状态污染回归结果。
+    sessionPersistenceEnabled: false
   };
   const vectorIndex = createSearchIndex(testConfig, products);
   const app = createApp({ config: testConfig, products, vectorIndex });
@@ -279,6 +281,27 @@ async function run() {
         assert(colloquialHealthy.products[0].productId === compared.products[0].productId, "哪个健康些 should keep compared product 1");
         assert(colloquialHealthy.products[1].productId === compared.products[1].productId, "哪个健康些 should keep compared product 2");
         assert(colloquialHealthy.comparison?.columns?.length === 2, "哪个健康些 should emit comparison component data");
+      })
+    );
+
+    results.push(
+      await runCase("对比后单品追问：再问哪款不那么甜仍沿用刚才对比范围", async () => {
+        const conversationId = "memory-compare-after-refer-sweetness";
+        const setup = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        assert(setup.products.length >= 3, "sweetness setup should keep at least three beverage candidates");
+
+        const compared = await chat(baseUrl, conversationId, "比较2和3", 6);
+        assert(compared.products.length === 2, "sweetness setup comparison should return two products");
+
+        const namedProduct = compared.products.find((product) => product.brand.includes("农夫山泉")) || compared.products[0];
+        const detail = await chat(baseUrl, conversationId, `${namedProduct.brand}这款好像还行`, 6);
+        assert(detail.products.length === 1, "name refer after comparison should focus on one product");
+
+        const lessSweet = await chat(baseUrl, conversationId, "哪款不那么甜", 6);
+        assert(lessSweet.products.length === 2, "sweetness follow-up should keep the compared pair instead of all original candidates");
+        assert(lessSweet.products[0].productId === compared.products[0].productId, "sweetness follow-up should keep compared product 1");
+        assert(lessSweet.products[1].productId === compared.products[1].productId, "sweetness follow-up should keep compared product 2");
+        assert(lessSweet.comparison?.columns?.length === 2, "sweetness follow-up should emit comparison component data");
       })
     );
 

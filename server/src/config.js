@@ -29,6 +29,7 @@ const defaultEmbeddingDimension = embeddingProvider === "ark" ? 1024 : 384;
 const llmProvider = process.env.LLM_PROVIDER || "ark";
 const deepseekApiKey = process.env.DEEPSEEK_API_KEY || "";
 const arkApiKey = process.env.ARK_API_KEY || "";
+const arkEmbeddingApiKey = process.env.ARK_EMBEDDING_API_KEY || arkApiKey;
 
 // 全局配置集中放在这里，其他模块只读取 config，不直接散落读取环境变量。
 export const config = {
@@ -39,6 +40,7 @@ export const config = {
   qdrantCollection: process.env.QDRANT_COLLECTION || "shopguide_products",
   embeddingProvider,
   embeddingDimension: Number(process.env.EMBEDDING_DIMENSION || defaultEmbeddingDimension),
+  arkEmbeddingApiKey,
   arkEmbeddingModel: process.env.ARK_EMBEDDING_MODEL || "doubao-embedding-vision-250615",
   arkEmbeddingPath: process.env.ARK_EMBEDDING_PATH || "/embeddings/multimodal",
   llmProvider,
@@ -51,5 +53,7 @@ export const config = {
   deepseekModel: process.env.DEEPSEEK_MODEL || "deepseek-chat",
   hotQueryCacheEnabled: process.env.HOT_QUERY_CACHE_ENABLED !== "false",
   hotQueryCacheMaxEntries: Number(process.env.HOT_QUERY_CACHE_MAX_ENTRIES || 80),
-  hotQueryCacheTtlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000)
+  hotQueryCacheTtlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000),
+  sessionPersistenceEnabled: process.env.SESSION_PERSISTENCE_ENABLED !== "false",
+  sessionStorePath: path.resolve(process.cwd(), process.env.SESSION_STORE_PATH || ".data/shopguide_sessions.db")
 };

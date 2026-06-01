@@ -1,38 +1,112 @@
 # 项目完成情况
 
-## 后端（Node.js）
+本文档用于交付前快速说明当前项目状态。结论：项目已经满足最小可演示闭环，并完成了“对话智能与 RAG 增强”“工程质量与性能优化”中的多个加分点。
+
+## 1. 总体结论
+
+当前项目可以作为比赛 Demo 交付：
+
+```text
+Android 原生 App
+  -> Node.js 后端 SSE
+  -> 意图解析 / 结构化记忆
+  -> 商品检索 / 过滤 / 排序
+  -> LLM 或本地兜底回答
+  -> 流式文本 + 商品卡片 + 结构化对比卡
+```
+
+项目核心边界已经建立：回答、卡片、对比结果和详情页都以商品库数据为准，不让模型自由编造商品、价格、库存、优惠或功效。
+
+## 2. 后端完成情况
 
 ### 已完成
-- **商品数据**：100 条商品，覆盖美妆护肤、数码电子、服饰运动、食品生活 4 个类目
-- **向量检索**：本地 TF-IDF 索引 + Qdrant 外部向量库双实现，工厂模式切换
-- **Embedding**：本地哈希（384维）+ Ark 豆包 API（1024维）
-- **LLM 集成**：DeepSeek / 豆包双通道，OpenAI 兼容流式 + SSE 解析
-- **SSE 接口**：`POST /api/chat` 推送 `token` / `products` / `done` / `error` 事件
-- **多轮记忆**：会话状态跟踪（类目、价格区间、排除项、偏好）
-- **结构化回答**：推荐理由 + 商品卡片数据生成
 
-### 待完成
-- 商品图片服务端点
-- 会话持久化（目前仅内存存储）
-- 图片搜索（以图搜图）
+- **商品数据加载**：约 100 条商品，覆盖美妆护肤、数码电子、服饰运动、食品饮料 4 个类目。
+- **RAG 检索链路**：支持本地向量检索和 Qdrant 向量数据库。
+- **Embedding**：支持本地哈希向量和 Ark embedding；Qdrant collection 建议按 embedding 方案区分。
+- **模型接入**：支持 DeepSeek 和 Doubao/Ark 聊天模型；无 Key 时可用本地确定性回答兜底。
+- **LLM Plan + Validator**：LLM 负责语义解析，后端校验意图、范围、序号、预算和排除词，避免模型越界。
+- **SSE 流式接口**：`/api/chat` 返回 `token`、`meta`、`comparison`、`products`、`done`、`error`。
+- **多轮记忆**：按 `deviceId + conversationId` 管理结构化会话状态，支持多需求隔离、旧需求恢复、序号指代和对比后追问。
+- **会话持久化**：默认写入本地 SQLite，后端重启后可恢复会话；客户端 `history` 作为兜底。
+- **商品图片与详情接口**：支持商品图片加载和详情页数据返回。
+- **结构化对比卡**：对比结果以 `comparison` 事件返回，和商品卡片使用同一批 `productId`。
+- **热门查询缓存**：只缓存不依赖上下文的新搜索，降低重复检索和模型调用成本。
+- **调试与性能接口**：`/api/debug/retrieve`、`/api/performance`、`/api/health`。
 
-## 客户端（Android 原生）
+### 未做或暂不做
+
+- 购物车与下单闭环。
+- 拍照找货。
+- 真实账号登录与跨设备同步。
+- 服务端用户画像和长期个性化推荐。
+
+这些属于后续扩展，不影响当前比赛最小闭环和已完成加分项展示。
+
+## 3. 客户端完成情况
 
 ### 已完成
-- **技术栈**：Kotlin + Jetpack Compose + Material3
-- **对话界面**：ChatScreen（消息列表）、MessageBubble（气泡）、InputBar（输入+发送）
-- **SSE 客户端**：基于 HttpURLConnection 解析流式事件
-- **商品卡片**：ProductCardView 展示标题/品牌/价格/推荐理由
-- **连接状态**：Header 显示服务端连接状态
 
-### 待完成
-- 商品卡片图片加载（模型缺 imagePath 字段）
-- 网络层升级为 Retrofit/OkHttp
-- 加载状态指示器
-- 连接失败的错误恢复 UI
+- **Android 原生客户端**：Kotlin + Jetpack Compose + Material3。
+- **聊天界面**：消息列表、输入框、发送状态、后端连接状态。
+- **SSE 客户端**：解析后端 `token`、`meta`、`comparison`、`products`、`done`、`error`。
+- **流式渲染**：AI 回复分片显示。
+- **商品卡片**：横向商品卡片，展示图片、标题、品牌、价格和类目。
+- **商品详情页**：点击卡片进入详情，查看描述、SKU、FAQ、评价等证据。
+- **多会话列表**：支持新建、切换、重命名、删除和批量管理。
+- **本地历史持久化**：聊天记录保存在 `SharedPreferences`。
+- **匿名设备身份**：客户端生成 `deviceId`，用于后端会话隔离和持久化。
+- **结构化对比卡**：客户端渲染后端 `comparison` 事件。
+- **自动滚动优化**：用户在底部时自动滚动；用户翻历史时不强行抢滚动。
 
-## 端到端状态
+### 未做或暂不做
 
-**已跑通**：用户输入 → RAG 检索 → LLM 流式生成 → SSE 推送 → Android 渲染文本+卡片
+- 语音输入 / TTS。
+- 拍照找货。
+- 完整登录页。
+- 复杂动效和商业级 UI 打磨。
 
-**待补充**：商品图片展示链路、会话重置 UI、弱网/断连处理
+## 4. 自动化测试覆盖
+
+当前后端测试覆盖：
+
+- `answer.test.js`：回答边界、Prompt、防幻觉、对比卡字段。
+- `intent.test.js`：LLM Plan 归一化、Validator 约束、指代/比较意图。
+- `memory-eval.test.js`：多轮记忆、预算继承、跨需求恢复、对比后追问、数字指代。
+- `retrieval-quality.test.js`：检索质量基线。
+- `performance.test.js`：热门查询缓存和首 token 指标。
+- `session-persistence.test.js`：`deviceId + conversationId` 会话隔离和持久化恢复。
+- `smoke.test.js`：后端端到端 smoke。
+
+交付前建议至少运行：
+
+```bash
+cd server
+npm run test:answer
+node src/__tests__/memory-eval.test.js
+npm run test:session
+npm run test:performance
+npm run test:smoke
+```
+
+## 5. 加分点完成情况
+
+### 4.3 对话智能与 RAG 增强
+
+- 多轮上下文记忆：已完成。
+- 反选与排除：已完成，覆盖预算、否定词、价格方向等典型问题。
+- 多商品结构化对比：已完成，支持对比后继续追问。
+- Agent 对复杂语义的处理：已通过 LLM Plan + 后端 Validator 组合实现。
+
+### 4.4 工程质量与性能优化
+
+- 热门查询缓存：已完成。
+- 首 token 可观测指标：已完成，`meta` SSE 和 `/api/performance` 可查看。
+- 端侧体验打磨：已完成商品卡片、详情页、多会话、自动滚动和对比卡；骨架屏未保留，因为实际体验割裂。
+
+## 6. 交付风险与注意事项
+
+- `server/.env`、API Key、`server/.data/` 不要提交。
+- 如果使用 Qdrant + Ark embedding，需要先启动 Qdrant 并执行 `npm run qdrant:ingest`。
+- 切换 embedding 方案时，需要换 Qdrant collection 名称或清空旧 collection 后重新入库。
+- Android 编译由用户在 Android Studio 中执行；协作中默认不运行 Gradle 编译命令。

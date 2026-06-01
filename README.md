@@ -1,110 +1,139 @@
 # ShopGuide Agent
 
-基于 RAG 的多模态电商智能导购 AI Agent 课题项目。当前仓库重点完成并打磨了“Android 原生客户端对话 -> Node.js 后端检索 -> 模型或本地兜底生成 -> SSE 流式返回 -> 商品卡片/详情页展示”的端到端闭环。
+基于 RAG 的电商智能导购 AI Agent。项目实现了从 Android 原生客户端到 Node.js 后端 RAG 服务的端到端闭环：
 
-## 当前项目状态
+```text
+用户自然语言购物需求
+-> Android 原生聊天界面
+-> Node.js 后端意图解析与多轮记忆
+-> 商品检索、硬过滤、排序
+-> LLM 或本地兜底生成回答
+-> SSE 流式返回文本、商品卡片、结构化对比卡
+-> 客户端展示商品卡片和详情页
+```
 
-项目已经可以作为可运行 Demo 演示：
+项目核心原则：**回答、商品卡片、对比结果和详情页必须基于商品库真实数据，不能编造不存在的商品、价格、库存、优惠、销量或功效。**
 
-- Android 原生 App：Kotlin + Jetpack Compose。
-- 后端服务：Node.js + Express。
-- 商品数据：`ecommerce_agent_dataset/` 下 4 个类目、约 100 个商品 JSON 与图片。
-- RAG 检索：支持本地向量检索，也可接入 Qdrant。
-- 模型生成：支持 DeepSeek 或 Doubao/Ark；没有 API Key 时使用本地确定性回答兜底，保证最小闭环可演示。
-- 客户端体验：SSE 流式文字、商品卡片、商品详情页、结构化对比卡、多会话本地历史。
+## 当前完成度
 
-项目的核心约束是：回答、卡片和详情必须基于商品库结构化数据，不能编造商品、价格、库存、优惠、销量或功效。
+当前仓库已经可以作为可运行 Demo 演示，覆盖课程要求中的最小闭环，并实现了部分加分点。
 
-## 目录结构
+| 模块 | 完成情况 |
+| --- | --- |
+| Android 原生客户端 | Kotlin + Jetpack Compose，支持聊天、流式回答、商品卡片、详情页、多会话 |
+| 后端 RAG 服务 | Node.js + Express，支持商品加载、检索、过滤、SSE 流式接口 |
+| 商品数据 | `ecommerce_agent_dataset/` 下约 100 个商品，含 JSON 与图片 |
+| 模型接入 | 支持 DeepSeek 或 Doubao/Ark；无 Key 时可用本地确定性回答兜底 |
+| 向量检索 | 支持本地向量检索，也可接入 Qdrant |
+| 多轮上下文 | 支持结构化需求记忆、跨需求恢复、指代、预算继承与隔离 |
+| 对比决策 | 支持多商品结构化对比卡，能处理“2 和 3 哪个好”等追问 |
+| 工程质量 | 有热门查询缓存、首 token 指标、专项自动化测试 |
+
+## 功能亮点
+
+### 1. 受控 RAG Agent 链路
+
+项目不是简单的“检索后把内容塞给 LLM”，而是采用更可控的 Agent 编排：
+
+```text
+LLM Plan / 规则兜底
+-> 后端 Validator 校验
+-> memory 确定上下文和候选范围
+-> retriever 执行商品检索、硬过滤、排序
+-> LLM 或本地模板基于候选商品回答
+-> products / comparison 结构化事件返回客户端
+```
+
+LLM 负责语义理解和自然语言表达，后端负责可信边界、状态管理和商品集合控制。
+
+### 2. LLM Plan + 后端 Validator
+
+有模型 Key 时，后端会让 LLM 输出结构化 Plan，例如：
+
+```json
+{
+  "turn_type": "compare",
+  "scope": "last_compared_products",
+  "target_refs": [2, 5],
+  "focus": ["控油", "清爽"],
+  "max_price": null,
+  "negative_terms": [],
+  "preferences": ["控油"]
+}
+```
+
+后端不会直接执行原始 Plan，而是先校验：
+
+- `turn_type` 只能是 `new_search / refine / refer / compare`。
+- `compare / refer` 不能被 LLM 扩大到全库。
+- `target_refs` 必须指向当前候选中真实存在的序号。
+- 用户没提预算时，LLM 不能凭空加预算硬约束。
+- 用户没说“不要/不含/排除”时，LLM 不能凭空加排除词。
+- `refer / compare` 场景下，LLM 不能凭空改写类目或商品类型。
+
+### 3. 多轮上下文与结构化记忆
+
+后端按 `deviceId + conversationId` 维护会话状态，并把同一会话里的不同购物需求拆成结构化 `needs`：
+
+- 支持“再便宜点”“1 万预算”“不要含酒精”等补充条件。
+- 支持“第二款怎么样”“第三款呢”等序号指代。
+- 支持“比较 2 和 5”“哪个更控油”“哪款更清爽”等对比后追问。
+- 支持同一会话中切换新品类后，再回到旧需求，例如先聊笔记本、再聊防晒、再问“刚才笔记本第三款呢”。
+- 新需求不会继承旧需求预算，避免“笔记本 1 万预算”污染“防晒霜推荐”。
+- 客户端生成匿名 `deviceId`，后端把会话快照持久化到本地 SQLite，服务重启后可恢复上下文；未传 `deviceId` 的旧请求会落到 `anonymous`。
+
+### 4. 结构化对比卡
+
+对比问题会返回 `comparison` SSE 事件，客户端用结构化组件展示：
+
+- 明确推荐结论。
+- 对比列与商品卡片使用同一批 `productId`。
+- 行维度包括价格、取舍点、适合场景等。
+- 避免从 LLM 文本里解析表格，保证文字、卡片、对比卡一致。
+
+### 5. 工程质量与性能优化
+
+- 热门新搜索缓存：相似热门查询可复用结果，降低重复检索和模型生成成本。
+- `meta` SSE 事件：返回缓存命中和首 token 耗时。
+- `/api/performance`：查看缓存 `size / hits / misses / writes / ttlMs`。
+- 自动化测试覆盖回答、意图、记忆、检索质量、性能和后端端到端 smoke。
+
+## 项目结构
 
 ```text
 ShopGuide-Agent/
 ├─ client/                    # Android 原生客户端，Kotlin + Jetpack Compose
 ├─ server/                    # Node.js 后端，负责 RAG、SSE、商品接口和模型调用
-├─ docs/                      # 架构、API、Qdrant、Demo 验收和学习文档
+├─ docs/                      # API、架构、Qdrant、Demo 验收和项目要求文档
 ├─ ecommerce_agent_dataset/   # 商品 JSON 和图片数据
-├─ qdrant_storage/            # 本地 Qdrant 持久化目录，不提交
 ├─ docker-compose.yml         # 本地 Qdrant 服务配置
 └─ README.md                  # 项目总览
 ```
 
-## 端到端链路
-
-```text
-Android App
-  -> POST /api/chat
-  -> 后端恢复 conversationId 对应的会话记忆
-  -> 解析本轮意图：新搜索 / 追问细化 / 指代 / 对比
-  -> 商品硬过滤：类目、商品类型、预算、排除词
-  -> 本地向量或 Qdrant 排序
-  -> 构造只包含候选商品的 RAG Prompt
-  -> LLM 流式生成，或本地确定性回答兜底
-  -> SSE 返回 token / meta / comparison / products / done
-  -> 客户端展示回答、对比卡、商品卡片和详情页
-```
-
-## 主要能力
-
-### 客户端
-
-- 原生 Android App，不是 Web/H5。
-- 聊天页支持文字输入、快捷问题、流式回答和错误提示。
-- 商品卡片横向展示，卡片数据来自 `products` SSE 事件。
-- 点击卡片进入商品详情页，展示主图、价格、规格、官方问答和用户评价。
-- 支持结构化对比卡，适合“第二款和第三款对比一下”“哪个更适合通勤”等问题。
-- 支持多会话本地持久化、会话切换、重命名、删除和批量管理。
-- 客户端会把最近历史随请求带给后端，帮助后端重启后恢复多轮上下文。
-
-### 后端
-
-- 加载并标准化商品 JSON，构造检索文本和商品卡片。
-- `/api/chat` 提供 SSE 流式导购接口。
-- `/api/products`、`/api/products/:productId`、`/api/products/:productId/image` 提供商品列表、详情和图片。
-- `/api/debug/retrieve` 返回意图解析、过滤、排序和候选商品调试信息。
-- `/api/performance` 返回热门查询缓存统计。
-- 支持本地向量检索和 Qdrant 检索。
-- 支持本地 embedding 兜底和 Doubao/Ark embedding。
-- 支持 DeepSeek 或 Doubao/Ark 聊天模型。
-- 支持热门新搜索缓存，降低重复检索和模型生成成本。
-
-### RAG 与多轮记忆
-
-- 识别类目、商品类型、预算、排除词、偏好词。
-- 区分 `new_search`、`refine`、`refer`、`compare` 等对话意图。
-- 追问中继承合理上下文，例如“1 万预算”“再便宜点”“第二款怎么样”。
-- 新需求会隔离旧需求，避免“笔记本预算”污染“防晒霜推荐”。
-- 对比问题只围绕被点名或上一轮候选商品，不重新从全库插入无关商品。
-- 结构化商品卡片由后端可信数据生成，不从模型自然语言反向解析。
-- 无匹配结果时明确说明商品库没有满足条件的商品，不硬编推荐。
-
 ## 快速启动
 
-### 1. 安装后端依赖
+### 1. 启动后端
+
+进入后端目录并安装依赖：
 
 ```bash
 cd server
 npm install
 ```
 
-### 2. 配置环境变量
-
-复制 `server/.env.example` 为 `server/.env`，按需填写模型 Key。没有模型 Key 也能使用本地兜底回答跑通 Demo。
+复制本地配置：
 
 ```bash
-cd server
 copy .env.example .env
 ```
 
-敏感信息只放在本地 `.env`，不要写入源码、README 或提交记录。
-
-### 3. 启动后端
+默认配置使用本地向量检索和本地兜底回答，不填模型 API Key 也能跑通 Demo。启动服务：
 
 ```bash
-cd server
 npm run dev
 ```
 
-默认地址：
+默认监听：
 
 ```text
 http://localhost:3001
@@ -116,24 +145,15 @@ http://localhost:3001
 Invoke-WebRequest -UseBasicParsing http://localhost:3001/api/health
 ```
 
-### 4. 可选：启动 Qdrant
+### 2. 启动 Android 客户端
 
-本地检索不依赖 Qdrant。如果需要验证向量数据库链路：
+用 Android Studio 打开：
 
-```powershell
-docker compose up -d qdrant
+```text
+D:\code\agent\ShopGuide-Agent\client
 ```
 
-```bash
-cd server
-npm run qdrant:health
-npm run qdrant:ingest
-npm run qdrant:test
-```
-
-### 5. 启动 Android 客户端
-
-用 Android Studio 打开 `client/` 目录并运行。
+等待 Gradle Sync 完成后运行 App。
 
 客户端后端地址在：
 
@@ -146,9 +166,24 @@ client/app/src/main/java/com/shopguide/agent/network/ApiConfig.kt
 - Android 模拟器访问电脑本机后端：`http://10.0.2.2:3001`
 - 真机访问电脑后端：改为电脑局域网 IP，例如 `http://192.168.x.x:3001`
 
-当前代码中的 `BASE_URL` 可能是本机调试 IP，换机器运行时需要先检查这里。
+### 3. 可选：启动 Qdrant
 
-## 常用后端配置
+本地检索不依赖 Qdrant。如果要演示向量数据库链路：
+
+```powershell
+docker compose up -d qdrant
+```
+
+```bash
+cd server
+npm run qdrant:health
+npm run qdrant:ingest
+npm run qdrant:test
+```
+
+## 常用配置
+
+配置文件为 `server/.env`，敏感信息只放本地，不要提交。
 
 ### 本地检索
 
@@ -158,7 +193,7 @@ EMBEDDING_PROVIDER=local
 EMBEDDING_DIMENSION=384
 ```
 
-### Qdrant + 本地 embedding
+### Qdrant + 本地 Embedding
 
 ```env
 VECTOR_STORE=qdrant
@@ -168,7 +203,7 @@ EMBEDDING_PROVIDER=local
 EMBEDDING_DIMENSION=384
 ```
 
-### Qdrant + Doubao/Ark embedding
+### Qdrant + Doubao/Ark Embedding
 
 ```env
 VECTOR_STORE=qdrant
@@ -178,7 +213,7 @@ EMBEDDING_PROVIDER=ark
 EMBEDDING_DIMENSION=1024
 ARK_EMBEDDING_MODEL=doubao-embedding-vision-250615
 ARK_EMBEDDING_PATH=/embeddings/multimodal
-ARK_API_KEY=你的火山方舟 API Key
+ARK_EMBEDDING_API_KEY=你的 Ark embedding API Key
 ```
 
 ### DeepSeek 聊天模型
@@ -196,14 +231,38 @@ DEEPSEEK_MODEL=deepseek-chat
 LLM_PROVIDER=ark
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_MODEL=你的 Ark 聊天模型 endpoint id
-ARK_API_KEY=你的火山方舟 API Key
+ARK_API_KEY=你的 Ark 聊天模型 API Key
 ```
 
 `EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关，可以使用 Ark 做 embedding，同时使用 DeepSeek 做聊天生成。
 
+## API 概览
+
+| 接口 | 方法 | 用途 |
+| --- | --- | --- |
+| `/api/health` | GET | 健康检查，返回商品数量、向量库、模型和缓存状态 |
+| `/api/chat` | POST | SSE 流式导购对话 |
+| `/api/products` | GET | 商品卡片列表 |
+| `/api/products/:productId` | GET | 商品详情 |
+| `/api/products/:productId/image` | GET | 商品图片 |
+| `/api/debug/retrieve` | POST | 检索调试，查看意图、过滤、排序和候选 |
+| `/api/performance` | GET | 热门查询缓存和首 token 相关统计 |
+| `/api/conversations/reset` | POST | 重置指定后端会话记忆 |
+
+`/api/chat` SSE 事件：
+
+| 事件 | 含义 |
+| --- | --- |
+| `token` | 流式文本片段 |
+| `meta` | 缓存和首 token 调试信息，客户端可忽略 |
+| `comparison` | 结构化商品对比卡 |
+| `products` | 商品卡片数据 |
+| `done` | 本轮完成 |
+| `error` | 结构化错误 |
+
 ## 测试与自检
 
-后端主要自检命令：
+后端测试命令：
 
 ```bash
 cd server
@@ -212,11 +271,12 @@ npm run test:retrieval
 npm run test:retrieval-quality
 npm run test:embedding
 npm run test:performance
+npm run test:session
 npm run test:smoke
 npm run demo:retrieve
 ```
 
-当前仓库还包含专项测试文件：
+专项测试：
 
 ```bash
 cd server
@@ -224,37 +284,70 @@ node src/__tests__/intent.test.js
 node src/__tests__/memory-eval.test.js
 ```
 
-推荐日常开发至少跑：
+建议：
 
-```bash
-cd server
-npm run test:answer
-npm run test:retrieval-quality
-npm run test:smoke
-```
+- 修改回答、Prompt 或对比逻辑：跑 `test:answer`。
+- 修改检索、过滤或排序：跑 `test:retrieval-quality`。
+- 修改多轮记忆、指代、预算、对比：跑 `memory-eval.test.js` 和 `intent.test.js`。
+- 修改缓存或性能逻辑：跑 `test:performance`。
+- 修改 `deviceId`、会话隔离或持久化：跑 `test:session`。
+- 提交前至少跑 `test:smoke`。
 
-如果改动了多轮记忆、指代、对比或追问逻辑，再额外运行：
+当前多轮记忆专项覆盖的典型场景包括：
 
-```bash
-cd server
-node src/__tests__/memory-eval.test.js
-node src/__tests__/intent.test.js
-```
+- 预算继承与新需求隔离。
+- 防晒后回问旧笔记本需求。
+- 数字指代 `2怎么样`、`2和3哪个好`。
+- 对比后追问 `哪个控油些`、`哪款更清爽`、`谁更舒适`。
+- `太便宜了` 应切到更高价候选。
+- 长期摘要参与追问但不制造硬约束。
 
-## Demo 推荐问题
+## Demo 演示脚本
 
-可以用这些问题验证核心链路：
+推荐 3-5 分钟演示顺序：
 
-- 推荐一款适合油皮的防晒霜
-- 推荐防晒霜，但不要含酒精
-- 送女生的口红
-- 想买一台办公用轻薄笔记本
-- 1 万预算
-- 第二款和第三款对比一下
-- 我主要通勤，偶尔出差，选哪个？
-- 推荐无糖饮料
-- 推荐通勤背包
-- 推荐一款手机，拍照好一点
+1. **基础推荐**
+   - 输入：`推荐一款适合油皮的防晒霜`
+   - 展示：流式回答、商品卡片、点击详情页。
+
+2. **预算与反选**
+   - 输入：`不要超过200`
+   - 展示：后端硬过滤预算，卡片只显示预算内商品。
+
+3. **多商品对比**
+   - 输入：`第二款和第三款对比一下`
+   - 展示：结构化对比卡和对应商品卡片。
+
+4. **对比后维度追问**
+   - 输入：`哪个更控油` 或 `哪款更清爽`
+   - 展示：只在刚才比较过的商品中决策，不回到全部候选。
+
+5. **跨需求记忆**
+   - 输入：`想买一台办公用轻薄笔记本`
+   - 输入：`1万预算`
+   - 输入：`推荐一款适合油皮的防晒霜`
+   - 输入：`刚才笔记本第三款呢`
+   - 展示：同一会话多需求隔离与恢复。
+
+6. **性能观测**
+   - 重复问热门查询。
+   - 展示 `/api/performance` 中的缓存命中统计。
+
+## 推荐验证问题
+
+- `推荐一款适合油皮的防晒霜`
+- `不要超过200`
+- `太便宜了`
+- `第二款怎么样`
+- `第二款和第三款对比一下`
+- `哪个控油些`
+- `哪款更清爽`
+- `想买一台办公用轻薄笔记本`
+- `1万预算`
+- `刚才笔记本第三款呢`
+- `推荐无糖饮料`
+- `比较2和5`
+- `哪个更健康`
 
 ## 文档入口
 
@@ -267,12 +360,11 @@ node src/__tests__/intent.test.js
 - [项目进度](docs/progress.md)
 - [项目背景与要求](docs/project-background-requirements.md)
 
-## 提交注意
+## 提交与安全
 
-以下内容不要提交到 GitHub：
+以下内容不要提交到公开仓库：
 
 - `server/.env`
-- `AGENTS.md`
 - `client/local.properties`
 - `qdrant_storage/`
-- API Key、SDK 本地路径、个人环境配置
+- API Key、SDK 本地路径、个人账号或机器环境配置

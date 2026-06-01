@@ -14,8 +14,11 @@ import {
   buildConversationMemorySummary,
   buildRetrievalQuery,
   classifyTurnIntent,
+  configureSessionPersistence,
   getRecentTurns,
   getSession,
+  getSessionPersistenceSnapshot,
+  persistSession,
   rememberProducts,
   resetSession,
   resetSessionStateForNewSearch,
@@ -63,6 +66,13 @@ function resolveChatProductLimit(rawLimit) {
   if (!Number.isFinite(limit)) return DEFAULT_CHAT_PRODUCT_LIMIT;
   // 聊天接口允许客户端按展示形态调整卡片数量，但仍设置上限，避免一次返回太多商品让回答失焦。
   return Math.max(1, Math.min(MAX_CHAT_PRODUCT_LIMIT, Math.floor(limit)));
+}
+
+function resolveRequestDeviceId(body = {}) {
+  // deviceId 是客户端本地生成的匿名身份，不代表真实设备号。后端只用它做会话隔离和持久化 key，
+  // 没有传时继续落到 anonymous，保证旧客户端和测试脚本不需要立刻改造。
+  const deviceId = String(body.deviceId || "anonymous").trim();
+  return deviceId || "anonymous";
 }
 
 function parsedRetrievalInput(turnIntent) {
@@ -151,7 +161,8 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
 
   try {
     const conversationId = String(body.conversationId || "default").trim() || "default";
-    const session = getSession(conversationId);
+    const deviceId = resolveRequestDeviceId(body);
+    const session = getSession(conversationId, deviceId);
     // 多会话列表在客户端持久化历史；后端上下文只在内存中。若后端刚重启或该会话未命中内存，
     // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
     restoreSessionFromHistory(session, body.history, products);
@@ -179,9 +190,10 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       appendTurn(session, "user", message);
       appendTurn(session, "assistant", cached.answerText);
       rememberProducts(session, answerProducts, { updateReference: true });
+      persistSession(session);
 
       writeSse(res, "products", { products: cards });
-      writeSse(res, "done", { ok: true, conversationId, cacheHit: true });
+      writeSse(res, "done", { ok: true, conversationId, deviceId, cacheHit: true });
       return;
     }
 
@@ -292,8 +304,10 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     appendTurn(session, "user", message);
     appendTurn(session, "assistant", answerText);
     rememberProducts(session, answerProducts, {
-      updateReference: turnIntent.type !== TURN_INTENTS.REFER && turnIntent.type !== TURN_INTENTS.COMPARE
+      updateReference: turnIntent.type !== TURN_INTENTS.REFER && turnIntent.type !== TURN_INTENTS.COMPARE,
+      updateComparison: turnIntent.type === TURN_INTENTS.COMPARE
     });
+    persistSession(session);
 
     const comparison = buildComparisonPayload(message, answerProducts, finalAnswerState);
     if (comparison) {
@@ -304,7 +318,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
 
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
-    writeSse(res, "done", { ok: true, conversationId });
+    writeSse(res, "done", { ok: true, conversationId, deviceId });
   } catch (error) {
     console.error("[/api/chat] failed:", error);
     const code = error.code || ERROR_CODES.INTERNAL_ERROR;
@@ -353,7 +367,8 @@ function installRoutes(app, { config, products, vectorIndex }) {
       modelEnabled: Boolean(config.llmApiKey),
       llmProvider: config.llmProvider,
       llmModel: config.llmProvider === "deepseek" ? config.deepseekModel : config.arkModel,
-      hotQueryCache: config.hotQueryCacheEnabled ? hotQueryCache.snapshot() : { enabled: false }
+      hotQueryCache: config.hotQueryCacheEnabled ? hotQueryCache.snapshot() : { enabled: false },
+      sessionPersistence: getSessionPersistenceSnapshot()
     });
   });
 
@@ -385,9 +400,11 @@ function installRoutes(app, { config, products, vectorIndex }) {
 
   app.post("/api/conversations/reset", (req, res) => {
     const conversationId = String(req.body?.conversationId || "default").trim() || "default";
-    const session = resetSession(conversationId);
+    const deviceId = resolveRequestDeviceId(req.body);
+    const session = resetSession(conversationId, deviceId);
     sendJson(res, 200, {
       ok: true,
+      deviceId,
       conversationId,
       session: snapshotSession(session)
     });
@@ -399,8 +416,9 @@ function installRoutes(app, { config, products, vectorIndex }) {
       if (!message) return sendJson(res, 400, buildError(ERROR_CODES.VALIDATION_ERROR, "message 不能为空"));
 
       const conversationId = String(req.body?.conversationId || "debug").trim() || "debug";
+      const deviceId = resolveRequestDeviceId(req.body);
       const includeMemory = req.body?.includeMemory !== false;
-      const session = includeMemory ? getSession(conversationId) : resetSession(`debug:${conversationId}:${Date.now()}`);
+      const session = includeMemory ? getSession(conversationId, deviceId) : resetSession(`debug:${conversationId}:${Date.now()}`, deviceId);
       const turnIntent = await parseTurnIntent(config, session, message);
       if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
         resetSessionStateForNewSearch(session);
@@ -445,6 +463,7 @@ function installRoutes(app, { config, products, vectorIndex }) {
 
       return sendJson(res, 200, {
         ok: true,
+        deviceId,
         conversationId,
         includeMemory,
         turnIntent,
@@ -494,6 +513,10 @@ function installErrorHandlers(app) {
 }
 
 export function createApp({ config, products, vectorIndex }) {
+  configureSessionPersistence({
+    enabled: config.sessionPersistenceEnabled,
+    path: config.sessionStorePath
+  });
   const app = express();
   installCommonMiddleware(app);
   installRoutes(app, { config, products, vectorIndex });

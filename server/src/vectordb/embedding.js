@@ -71,19 +71,21 @@ function describeJsonShape(value, depth = 0) {
 }
 
 async function embedTextWithArk(config, text) {
-  if (!config.arkApiKey) {
-    throw new Error("EMBEDDING_PROVIDER=ark 需要配置 ARK_API_KEY");
+  const apiKey = config.arkEmbeddingApiKey || config.arkApiKey;
+  if (!apiKey) {
+    throw new Error("EMBEDDING_PROVIDER=ark 需要配置 ARK_EMBEDDING_API_KEY，或使用 ARK_API_KEY 作为兼容兜底");
   }
 
   // doubao-embedding-vision 是多模态 embedding，文本输入用 type=text。
   // 如果后续接图片，可在 input 中追加 type=image_url 的内容。
+  // Embedding 和聊天生成可以使用不同模型、不同 API Key；这里明确读取 embedding 专用 Key。
   let response;
   try {
     response = await fetch(arkEmbeddingUrl(config), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.arkApiKey}`
+        Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model: config.arkEmbeddingModel,

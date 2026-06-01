@@ -16,17 +16,63 @@ function skuSummary(product) {
     .join("、");
 }
 
+function isCategory(product, category) {
+  return product.category === category;
+}
+
+function scopedTagRules(product) {
+  if (isCategory(product, "食品饮料")) {
+    return [
+      ["无糖", /(无糖|0糖|零糖|不含糖|零添加糖)/],
+      ["低负担", /(0脂|0卡|低糖|低负担|控糖|减脂|怕胖|热量低)/],
+      ["茶感", /(茶|乌龙|茉莉|绿茶|回甘|茶底|茶香|清润)/],
+      ["气泡", /(气泡|碳酸|苏打|杀口|爽感)/],
+      ["提神", /(咖啡因|提神|犯困|熬夜|能量|牛磺酸)/],
+      ["维C", /(维生素C|维C|柠檬)/],
+      ["少甜", /(不甜|不那么甜|甜度低|低糖|清淡|不腻|不齁|没有甜味|无糖)/]
+    ];
+  }
+
+  if (isCategory(product, "美妆护肤")) {
+    return [
+      ["控油", /(控油|油皮|减少油光|清爽)/],
+      ["清爽", /(清爽|轻薄|不黏腻|水感)/],
+      ["敏感肌", /(敏感肌|舒缓|修护|屏障|温和)/],
+      ["防水防汗", /(防水|防汗|户外|运动)/],
+      ["保湿", /(保湿|滋润|补水)/]
+    ];
+  }
+
+  if (isCategory(product, "数码电子")) {
+    return [
+      ["轻薄便携", /(轻薄|轻量|便携|通勤|出差)/],
+      ["办公", /(办公|商务|生产力|会议|键盘)/],
+      ["性能", /(高性能|性能|处理器|芯片|内存|Pro)/],
+      ["续航", /(续航|电池|快充)/],
+      ["屏幕", /(屏幕|高刷|色彩|分辨率|护眼)/]
+    ];
+  }
+
+  if (isCategory(product, "服饰运动")) {
+    return [
+      ["通勤", /(通勤|日常|百搭|城市)/],
+      ["户外", /(户外|徒步|防水|防风|耐磨)/],
+      ["轻量", /(轻量|轻便|轻盈)/],
+      ["运动", /(运动|跑步|训练|篮球)/],
+      ["耐用", /(耐用|耐磨|支撑|稳定)/]
+    ];
+  }
+
+  return [
+    ["预算", /(高性价比|预算|入门|标准版|价格|省)/],
+    ["耐用", /(耐用|稳定|可靠)/],
+    ["便携", /(便携|轻量|轻薄)/]
+  ];
+}
+
 function productFeatureTags(product) {
   const evidence = productEvidenceText(product);
-  const tagRules = [
-    ["通勤", /(通勤|办公|商务|生产力|便携|轻薄|轻量)/],
-    ["出差", /(出差|便携|轻薄|轻量|续航|商务)/],
-    ["预算", /(高性价比|预算|入门|标准版|价格|省)/],
-    ["性能", /(高性能|性能|生产力|Pro|处理器|芯片|内存)/],
-    ["户外", /(户外|防水|防汗|耐用|运动)/],
-    ["肤感", /(清爽|控油|油皮|敏感肌|舒缓|轻薄)/],
-    ["健康", /(健康|天然|无糖|0糖|零糖|低糖|无添加|茶|低负担)/]
-  ];
+  const tagRules = scopedTagRules(product);
   return tagRules.filter(([, pattern]) => pattern.test(evidence)).map(([tag]) => tag);
 }
 
@@ -35,6 +81,46 @@ function compactFeatureText(product) {
   if (tags.length > 0) return tags.join("、");
   const sku = skuSummary(product);
   if (sku) return sku;
+  return `${product.category}/${product.subCategory}`;
+}
+
+function comparisonTradeoffText(product) {
+  const tags = productFeatureTags(product);
+  if (tags.length > 0) return tags.slice(0, 3).join("、");
+  return compactFeatureText(product);
+}
+
+function comparisonScenarioText(product) {
+  const evidence = productEvidenceText(product);
+  const scenarioRules = isCategory(product, "食品饮料")
+    ? [
+        ["控糖/减脂期", /(无糖|0糖|零糖|控糖|减脂|怕胖|低负担)/],
+        ["日常饮用", /(日常|上班|学生|不爱喝白水|随手|办公室|工位)/],
+        ["解腻佐餐", /(解腻|火锅|外卖|重油|重盐|撸串|聚餐)/],
+        ["运动后", /(运动|健身|补水|电解质)/],
+        ["提神补能", /(提神|熬夜|犯困|咖啡因|能量|牛磺酸)/]
+      ]
+    : isCategory(product, "美妆护肤")
+      ? [
+          ["油皮日常", /(油皮|控油|清爽|日常)/],
+          ["户外活动", /(户外|防水|防汗|运动)/],
+          ["敏感肌", /(敏感肌|舒缓|修护|温和)/],
+          ["通勤", /(通勤|日常|上班)/]
+        ]
+      : isCategory(product, "数码电子")
+        ? [
+            ["办公学习", /(办公|学习|商务|生产力|会议)/],
+            ["通勤出差", /(通勤|出差|便携|轻薄|轻量)/],
+            ["高负载任务", /(性能|剪辑|设计|高性能|Pro)/]
+          ]
+        : [
+            ["日常使用", /(日常|通勤|百搭)/],
+            ["户外运动", /(户外|运动|跑步|徒步|训练)/],
+            ["长时间使用", /(舒适|耐用|支撑|稳定)/]
+          ];
+
+  const scenarios = scenarioRules.filter(([, pattern]) => pattern.test(evidence)).map(([label]) => label);
+  if (scenarios.length > 0) return [...new Set(scenarios)].slice(0, 3).join("、");
   return `${product.category}/${product.subCategory}`;
 }
 
@@ -153,14 +239,14 @@ export function buildComparisonPayload(message, products, state = {}) {
       label: "取舍点",
       values: products.map((product) => ({
         productId: product.productId,
-        value: compactFeatureText(product)
+        value: comparisonTradeoffText(product)
       }))
     },
     {
       label: "适合场景",
       values: products.map((product) => ({
         productId: product.productId,
-        value: productFeatureTags(product).slice(0, 3).join("、") || `${product.category}/${product.subCategory}`
+        value: comparisonScenarioText(product)
       }))
     }
   ];
@@ -348,7 +434,7 @@ export function buildLocalAnswer(message, products, history = [], state = {}) {
   const stateNote = formatStateConstraints(state);
   const lines = products.map((product, index) => {
     const reason = shortDescription(product);
-    return `${index + 1}. ${product.title}，参考价 ${product.basePrice} 元。推荐理由：${reason}`;
+    return `${index + 1}. **${product.title}**，参考价 ${product.basePrice} 元。推荐理由：${reason}`;
   });
   // 本地兜底回答也保留防幻觉边界：价格、规格、功效只能以商品卡片和详情里的真实数据为准。
   const guardrail = "以上推荐只基于当前商品库信息，价格和规格以商品卡片/详情为准，我不会额外编造优惠、库存或商品功效。";
@@ -376,7 +462,7 @@ export function buildModelMessages(message, products, history = [], state = {}) 
         "你是电商智能导购，负责基于商品库做 RAG 推荐。",
         "必须遵守：只使用提供的商品上下文；不得编造不存在的商品、价格、库存、优惠券、销量、功效或活动。",
         "如果候选商品不能完全满足用户条件，要如实说明“更接近需求”或“未完全满足”，不要夸大。",
-        "回答要简洁、中文、自然；候选商品有几个，就按顺序回答几个。",
+        "回答要简洁、中文、自然；候选商品有几个，就按顺序回答几个；每个候选商品名称必须用 Markdown **加粗**。",
         isCompareMode
           ? "本轮是商品对比/决策问题。请用“主要差异、逐款优缺点、适合谁、明确结论”的结构回答；必须给出更推荐哪一款，并说明依据；只能比较候选商品，不要新增商品。"
           : "",

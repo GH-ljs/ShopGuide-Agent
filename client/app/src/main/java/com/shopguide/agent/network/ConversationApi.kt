@@ -12,7 +12,7 @@ import java.net.URL
  * 否则新问题可能会被上一轮聊天记录影响。
  */
 object ConversationApi {
-    fun resetConversation(conversationId: String): Boolean {
+    fun resetConversation(deviceId: String, conversationId: String): Boolean {
         val url = URL("${ApiConfig.BASE_URL}/api/conversations/reset")
         val connection = url.openConnection() as HttpURLConnection
 
@@ -24,6 +24,7 @@ object ConversationApi {
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
 
             val requestBody = JSONObject()
+                .put("deviceId", deviceId)
                 .put("conversationId", conversationId)
                 .toString()
 

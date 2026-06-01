@@ -70,6 +70,7 @@ import com.shopguide.agent.network.ConversationApi
 import com.shopguide.agent.network.ProductDetailApi
 import com.shopguide.agent.storage.ConversationSummary
 import com.shopguide.agent.storage.ConversationStore
+import com.shopguide.agent.storage.DeviceStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -87,6 +88,7 @@ fun ChatScreen() {
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val deviceId = remember { DeviceStore.loadDeviceId(context) }
 
     // conversationId 同时影响后端记忆和本地历史。把它持久化后，重开 App 才能继续同一段对话。
     var conversationId by remember { mutableStateOf(ConversationStore.loadConversationId(context)) }
@@ -163,7 +165,7 @@ fun ChatScreen() {
 
         scope.launch(Dispatchers.IO) {
             // 即使本地已经换了新 conversationId，也通知后端清理旧会话，避免服务端内存继续保留无用上下文。
-            runCatching { ConversationApi.resetConversation(oldConversationId) }
+            runCatching { ConversationApi.resetConversation(deviceId, oldConversationId) }
         }
     }
 
@@ -227,6 +229,7 @@ fun ChatScreen() {
         scope.launch {
             withContext(Dispatchers.IO) {
                 ChatApi.streamChat(
+                    deviceId = deviceId,
                     conversationId = conversationId,
                     message = userText,
                     history = historyForRequest,

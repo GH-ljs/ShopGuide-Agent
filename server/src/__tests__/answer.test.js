@@ -31,6 +31,7 @@ function run() {
 
   const productAnswer = buildLocalAnswer("推荐护肤品", [first]);
   assert(productAnswer.includes(first.title), "local answer should mention retrieved product title");
+  assert(productAnswer.includes(`**${first.title}**`), "local answer should bold product names for chat rendering");
   assert(productAnswer.includes(String(first.basePrice)), "local answer should use retrieved product price");
   assert(productAnswer.includes("不会额外编造"), "local answer should include anti-hallucination guardrail");
 
@@ -61,6 +62,21 @@ function run() {
   assert(comparisonPayload?.recommendedProductId, "comparison payload should expose recommended product id");
   assert(comparisonPayload?.rows.some((row) => row.label === "价格"), "comparison payload should include price row");
 
+  const beveragePair = products.filter((product) => product.productId === "p_food_014" || product.productId === "p_food_004");
+  const beverageComparison = buildComparisonPayload("哪款不那么甜", beveragePair, {
+    answerMode: "compare",
+    preferences: ["不甜", "低糖"]
+  });
+  const beverageTradeoff = beverageComparison.rows.find((row) => row.label === "取舍点");
+  const beverageScenario = beverageComparison.rows.find((row) => row.label === "适合场景");
+  const beverageText = JSON.stringify(beverageComparison);
+  assert(!beverageText.includes("肤感"), "beverage comparison should not reuse skincare tags");
+  assert(!beverageText.includes("通勤"), "beverage comparison should not reuse commute tags");
+  assert(
+    beverageTradeoff.values.some((item, index) => item.value !== beverageScenario.values[index].value),
+    "comparison tradeoffs and scenarios should not duplicate the same values"
+  );
+
   const sunscreenPair = products.filter((product) => product.productId === "p_beauty_023" || product.productId === "p_beauty_010");
   const priceSafeDecision = buildLocalAnswer("比较2和3", sunscreenPair, [], {
     answerMode: "compare",
@@ -87,6 +103,7 @@ function run() {
   assert(productPrompt.includes("只使用提供的商品上下文"), "prompt should constrain answer to product context");
   assert(productPrompt.includes("本轮商品卡片会展示 1 个候选商品"), "prompt should bind answer count to product cards");
   assert(productPrompt.includes("不要跳过、不要新增候选之外的商品"), "prompt should forbid extra or skipped products");
+  assert(productPrompt.includes("商品名称必须用 Markdown **加粗**"), "prompt should require bold product names");
 
   const historyMessages = buildModelMessages("1万预算", [first], [
     { role: "user", content: "OLD_USER_NEED" },

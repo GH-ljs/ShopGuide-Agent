@@ -32,7 +32,8 @@ async function createTestServer() {
     deepseekApiKey: "",
     llmApiKey: "",
     vectorStore: "local",
-    hotQueryCacheEnabled: true
+    hotQueryCacheEnabled: true,
+    sessionPersistenceEnabled: false
   };
   const vectorIndex = createSearchIndex(testConfig, products);
   const app = createApp({ config: testConfig, products, vectorIndex });

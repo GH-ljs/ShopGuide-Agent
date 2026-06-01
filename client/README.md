@@ -45,6 +45,7 @@ client/
 │  │  └─ ProductDetailApi.kt          # GET /api/products/:productId
 │  ├─ storage/
 │  │  ├─ ConversationStore.kt         # SharedPreferences 多会话历史
+│  │  ├─ DeviceStore.kt               # 匿名 deviceId，本机身份与后端会话隔离
 │  │  └─ ImageCache.kt                # 商品图片轻量内存缓存
 │  └─ ui/
 │     ├─ ChatScreen.kt                # 主聊天界面、会话抽屉、发送和流式状态
@@ -142,7 +143,9 @@ const val CHAT_PRODUCT_LIMIT = 6
 - 每个会话的标题、更新时间和消息列表。
 - 每条助手消息中的商品卡片和对比卡。
 
-发送消息时，客户端会把最近若干条历史放进 `/api/chat` 请求。这个历史不是为了让客户端参与推荐，而是帮助后端在内存丢失或服务重启后恢复 turns、上一轮商品和多轮上下文。
+`DeviceStore` 会在 App 首次启动时生成匿名 `deviceId`，并保存在本地 `SharedPreferences`。它不是系统设备号，只用于让后端按 `deviceId + conversationId` 隔离和持久化会话。
+
+发送消息时，客户端会把 `deviceId`、`conversationId` 和最近若干条历史放进 `/api/chat` 请求。历史不是为了让客户端参与推荐，而是帮助后端在数据库不可用或旧数据缺失时兜底恢复 turns、上一轮商品和多轮上下文。
 
 当前本地存储适合 Demo 和少量历史。后续如果要做搜索、分页、云同步或更大规模历史，建议迁移到 Room 数据库。
 

@@ -29,6 +29,7 @@ data class ChatApiError(
  */
 object ChatApi {
     fun streamChat(
+        deviceId: String,
         conversationId: String,
         message: String,
         history: List<ChatMessage>,
@@ -52,6 +53,7 @@ object ChatApi {
 
             // 客户端只发送用户消息和 conversationId；检索、Prompt、模型调用都由后端负责。
             val requestBody = JSONObject()
+                .put("deviceId", deviceId)
                 .put("conversationId", conversationId)
                 .put("message", message)
                 .put("limit", ApiConfig.CHAT_PRODUCT_LIMIT)

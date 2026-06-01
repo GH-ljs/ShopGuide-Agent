@@ -27,7 +27,15 @@ function parseSseEvents(text) {
 
 async function createTestServer() {
   const products = loadProducts(config.datasetDir);
-  const testConfig = { ...config, port: 0, arkApiKey: "", deepseekApiKey: "", llmApiKey: "", vectorStore: "local" };
+  const testConfig = {
+    ...config,
+    port: 0,
+    arkApiKey: "",
+    deepseekApiKey: "",
+    llmApiKey: "",
+    vectorStore: "local",
+    sessionPersistenceEnabled: false
+  };
   const vectorIndex = createSearchIndex(testConfig, products);
   const app = createApp({ config: testConfig, products, vectorIndex });
 

@@ -95,7 +95,7 @@ EMBEDDING_PROVIDER=ark
 EMBEDDING_DIMENSION=1024
 ARK_EMBEDDING_MODEL=doubao-embedding-vision-250615
 ARK_EMBEDDING_PATH=/embeddings/multimodal
-ARK_API_KEY=你的火山方舟 API Key
+ARK_EMBEDDING_API_KEY=你的 Ark embedding API Key
 ```
 
 更完整的 Qdrant 排障和设计说明见 [../docs/qdrant.md](../docs/qdrant.md)。
@@ -117,7 +117,7 @@ Doubao/Ark：
 LLM_PROVIDER=ark
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_MODEL=你的 Ark 聊天模型 endpoint id
-ARK_API_KEY=你的火山方舟 API Key
+ARK_API_KEY=你的 Ark 聊天模型 API Key
 ```
 
 `EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关。可以用 Ark 做 embedding，同时用 DeepSeek 做聊天生成。没有可用模型 Key 时，后端会走本地确定性回答，保证 Demo 不因为模型配置中断。
@@ -132,13 +132,23 @@ HOT_QUERY_CACHE_TTL_MS=600000
 
 缓存只用于不依赖上下文的新搜索请求，例如“推荐一款适合油皮的防晒霜”。“第二款怎么样”“2 和 3 对比”这类多轮指代不会走缓存，避免把旧会话上下文答乱。
 
+### 5. 会话持久化
+
+```env
+SESSION_PERSISTENCE_ENABLED=true
+SESSION_STORE_PATH=.data/shopguide_sessions.db
+```
+
+默认使用本地 SQLite 保存 `deviceId + conversationId` 对应的结构化会话快照。后端重启后优先从 SQLite 恢复；如果运行时不支持 Node 自带 SQLite，会降级为同目录 JSON 文件。
+
 ## 核心链路
 
 `POST /api/chat` 是后端主链路，核心编排在 `src/http.js`：
 
 ```text
-读取 message / conversationId / history
-  -> restoreSessionFromHistory 恢复会话
+读取 deviceId / message / conversationId / history
+  -> getSession 从内存或 SQLite 恢复 deviceId + conversationId 会话
+  -> restoreSessionFromHistory 用客户端 history 做兜底恢复
   -> classifyTurnIntent / parseTurnIntent 解析本轮意图
   -> updateSessionState 更新结构化需求
   -> buildRetrievalQuery 构造检索 query
@@ -207,6 +217,7 @@ server/
 │  │  ├─ intent.js                   # LLM 意图解析，失败后回退规则解析
 │  │  ├─ llm.js                      # OpenAI-compatible 流式/非流式模型调用
 │  │  ├─ memory.js                   # conversationId 会话记忆、需求状态、指代解析
+│  │  ├─ sessionStore.js             # deviceId + conversationId 会话持久化
 │  │  └─ retriever.js                # RAG 检索编排、过滤、排序、调试信息
 │  ├─ utils/
 │  │  ├─ errors.js                   # 统一错误格式
@@ -229,6 +240,7 @@ server/
 │     ├─ performance.test.js         # 热门查询缓存和首 token 指标测试
 │     ├─ retrieval.test.js           # 基础检索冒烟测试
 │     ├─ retrieval-quality.test.js   # RAG 检索质量基线测试
+│     ├─ session-persistence.test.js # deviceId 会话隔离和持久化恢复测试
 │     └─ smoke.test.js               # 后端端到端 smoke 测试
 ├─ .env.example                      # 配置示例，可复制为 .env
 ├─ package.json
@@ -265,6 +277,7 @@ server/
 
 ```json
 {
+  "deviceId": "demo-device",
   "conversationId": "demo",
   "message": "推荐一款适合油皮的防晒霜",
   "limit": 6,
@@ -274,10 +287,11 @@ server/
 
 字段说明：
 
-- `conversationId`：会话 ID，用于后端内存上下文和客户端本地历史对齐。
+- `deviceId`：匿名设备 ID，用于后端隔离和持久化不同设备的会话；旧客户端不传时默认为 `anonymous`。
+- `conversationId`：会话 ID，和 `deviceId` 组合后定位一段后端会话记忆。
 - `message`：用户本轮输入。
 - `limit`：本轮最多返回多少个商品候选，服务端仍有上限保护。
-- `history`：客户端最近历史，用于后端重启后恢复上下文。
+- `history`：客户端最近历史，用于数据库不可用或旧数据缺失时兜底恢复上下文。
 
 SSE 事件：
 
@@ -342,6 +356,7 @@ npm run test:retrieval
 npm run test:retrieval-quality
 npm run test:embedding
 npm run test:performance
+npm run test:session
 npm run test:smoke
 npm run demo:retrieve
 ```
@@ -388,4 +403,4 @@ error       -> 展示错误提示
 - API Key 不写入 README、源码或示例提交。
 - 真实商品信息以数据集 JSON 为准。
 - 模型回答只作为导购话术，商品卡片和详情数据来自结构化商品数据。
-- 多轮会话状态当前保存在后端内存中，服务重启后主要依赖客户端 `history` 做轻量恢复。
+- 多轮会话状态按 `deviceId + conversationId` 保存在后端内存和本地 SQLite 中，服务重启后优先从 SQLite 恢复；客户端 `history` 继续作为兜底材料。

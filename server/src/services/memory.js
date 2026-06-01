@@ -10,15 +10,29 @@ import {
   inferItemIntent,
   PREFERENCE_HINTS
 } from "../utils/nlp.js";
+import { createSessionStore } from "./sessionStore.js";
 
 const MAX_TURNS = 6;
 const sessions = new Map();
+let sessionStore = createSessionStore({ enabled: false });
 export const TURN_INTENTS = {
   REFINE: "refine",
   REFER: "refer",
   COMPARE: "compare",
   NEW_SEARCH: "new_search"
 };
+
+function normalizeDeviceId(deviceId) {
+  return String(deviceId || "anonymous").trim() || "anonymous";
+}
+
+function normalizeConversationId(conversationId) {
+  return String(conversationId || "default").trim() || "default";
+}
+
+function buildSessionKey(conversationId, deviceId = "anonymous") {
+  return `${normalizeDeviceId(deviceId)}::${normalizeConversationId(conversationId)}`;
+}
 
 function createEmptyState() {
   return {
@@ -40,7 +54,8 @@ function createNeed(session, state = createEmptyState()) {
     status: "active",
     state,
     lastProducts: [],
-    referenceProducts: []
+    referenceProducts: [],
+    comparisonProducts: []
   };
 }
 
@@ -76,14 +91,19 @@ function refreshSessionSummary(session) {
   session.summary = buildConversationMemorySummary(session);
 }
 
-function createEmptySession(conversationId) {
+function createEmptySession(conversationId, deviceId = "anonymous") {
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  const normalizedDeviceId = normalizeDeviceId(deviceId);
   const session = {
-    conversationId,
+    deviceId: normalizedDeviceId,
+    conversationId: normalizedConversationId,
+    sessionKey: buildSessionKey(normalizedConversationId, normalizedDeviceId),
     // state 保存“可复用的购物约束”，turns 保存原始对话；两者分开后，检索不必反复猜历史意图。
     state: createEmptyState(),
     turns: [],
     lastProducts: [],
     referenceProducts: [],
+    comparisonProducts: [],
     needs: [],
     activeNeedId: "",
     nextNeedSeq: 0,
@@ -92,6 +112,36 @@ function createEmptySession(conversationId) {
   const initialNeed = createNeed(session, session.state);
   session.needs.push(initialNeed);
   session.activeNeedId = initialNeed.needId;
+  return session;
+}
+
+function hydrateSession(rawSession, conversationId, deviceId) {
+  if (!rawSession || typeof rawSession !== "object") return null;
+  const normalizedConversationId = normalizeConversationId(conversationId || rawSession.conversationId);
+  const normalizedDeviceId = normalizeDeviceId(deviceId || rawSession.deviceId);
+  const session = {
+    ...createEmptySession(normalizedConversationId, normalizedDeviceId),
+    ...rawSession,
+    deviceId: normalizedDeviceId,
+    conversationId: normalizedConversationId,
+    sessionKey: buildSessionKey(normalizedConversationId, normalizedDeviceId)
+  };
+
+  // 持久化快照可能来自旧版本。这里补齐默认字段，避免旧数据让多轮记忆链路崩掉。
+  session.state = session.state || createEmptyState();
+  session.turns = Array.isArray(session.turns) ? session.turns : [];
+  session.lastProducts = Array.isArray(session.lastProducts) ? session.lastProducts : [];
+  session.referenceProducts = Array.isArray(session.referenceProducts) ? session.referenceProducts : [];
+  session.comparisonProducts = Array.isArray(session.comparisonProducts) ? session.comparisonProducts : [];
+  session.needs = Array.isArray(session.needs) && session.needs.length ? session.needs : [];
+  session.activeNeedId = session.activeNeedId || "";
+  session.nextNeedSeq = Number(session.nextNeedSeq || 0);
+  if (session.needs.length === 0) {
+    const initialNeed = createNeed(session, session.state);
+    session.needs.push(initialNeed);
+    session.activeNeedId = initialNeed.needId;
+  }
+  refreshSessionSummary(session);
   return session;
 }
 
@@ -111,6 +161,7 @@ function syncSessionFromNeed(session, need = getActiveNeed(session)) {
   session.state = need.state || createEmptyState();
   session.lastProducts = need.lastProducts || [];
   session.referenceProducts = need.referenceProducts || [];
+  session.comparisonProducts = need.comparisonProducts || [];
 }
 
 function persistSessionToActiveNeed(session) {
@@ -118,6 +169,7 @@ function persistSessionToActiveNeed(session) {
   need.state = session.state;
   need.lastProducts = session.lastProducts || [];
   need.referenceProducts = session.referenceProducts || [];
+  need.comparisonProducts = session.comparisonProducts || [];
   need.status = "active";
   return need;
 }
@@ -131,25 +183,69 @@ function activateNeed(session, need) {
   return need;
 }
 
-export function getSession(conversationId) {
-  const id = conversationId || "default";
-  if (!sessions.has(id)) sessions.set(id, createEmptySession(id));
-  return sessions.get(id);
+export function configureSessionPersistence(options = {}) {
+  sessionStore = createSessionStore(options);
+  return sessionStore;
 }
 
-export function resetSession(conversationId) {
-  const id = conversationId || "default";
-  sessions.set(id, createEmptySession(id));
-  return sessions.get(id);
+export function getSession(conversationId, deviceId = "anonymous") {
+  const id = normalizeConversationId(conversationId);
+  const scopedKey = buildSessionKey(id, deviceId);
+  if (sessions.has(scopedKey)) return sessions.get(scopedKey);
+
+  const restoredSession = hydrateSession(sessionStore.load(normalizeDeviceId(deviceId), id), id, deviceId);
+  const session = restoredSession || createEmptySession(id, deviceId);
+  sessions.set(scopedKey, session);
+  return session;
+}
+
+export function resetSession(conversationId, deviceId = "anonymous") {
+  const id = normalizeConversationId(conversationId);
+  const scopedKey = buildSessionKey(id, deviceId);
+  const session = createEmptySession(id, deviceId);
+  sessions.set(scopedKey, session);
+  sessionStore.remove(session.deviceId, session.conversationId);
+  return session;
+}
+
+export function persistSession(session) {
+  if (!session) return;
+  // 回答成功后才持久化，避免失败请求污染下一轮上下文；数据库里保存的是结构化 session 快照。
+  try {
+    sessionStore.save(session);
+  } catch (error) {
+    // 持久化是“后端重启后恢复上下文”的增强能力，不应阻断本轮导购主链路。
+    // 例如 SQLite 短暂被其他进程占用时，用户仍应收到已生成的回答和商品卡片。
+    console.warn("[memory] failed to persist session:", error?.message || error);
+  }
+}
+
+export function clearSessionMemoryForTests(options = {}) {
+  sessions.clear();
+  if (options.clearStore) sessionStore.clearAll();
+}
+
+export function closeSessionPersistenceForTests() {
+  sessions.clear();
+  sessionStore.close?.();
+}
+
+export function getSessionPersistenceSnapshot() {
+  return {
+    type: sessionStore.type,
+    path: sessionStore.path
+  };
 }
 
 export function snapshotSession(session) {
   return {
+    deviceId: session.deviceId || "anonymous",
     conversationId: session.conversationId,
     state: session.state,
     turnCount: session.turns.length,
     lastProductIds: session.lastProducts.map((product) => product.productId),
     referenceProductIds: (session.referenceProducts || []).map((product) => product.productId),
+    comparisonProductIds: (session.comparisonProducts || []).map((product) => product.productId),
     activeNeedId: session.activeNeedId,
     summary: session.summary || buildConversationMemorySummary(session),
     needs: (session.needs || []).map((need) => ({
@@ -160,7 +256,8 @@ export function snapshotSession(session) {
       maxPrice: need.state?.maxPrice ?? null,
       minPrice: need.state?.minPrice ?? null,
       candidateProductIds: (need.referenceProducts || []).map((product) => product.productId),
-      lastProductIds: (need.lastProducts || []).map((product) => product.productId)
+      lastProductIds: (need.lastProducts || []).map((product) => product.productId),
+      comparisonProductIds: (need.comparisonProducts || []).map((product) => product.productId)
     }))
   };
 }
@@ -226,7 +323,12 @@ const COMPARISON_DECISION_WORDS = [
   "防晒力",
   "性能",
   "音质",
-  "便携"
+  "便携",
+  "甜",
+  "甜度",
+  "不甜",
+  "清淡",
+  "低糖"
 ];
 
 function looksLikePreferenceDecision(message, parsed = {}) {
@@ -235,7 +337,7 @@ function looksLikePreferenceDecision(message, parsed = {}) {
   if (!hasPreferenceWord) return false;
 
   const hasChoiceSubject = /(哪个|哪款|哪一个|谁|选哪|怎么选)/.test(message);
-  const hasComparativeTone = /(更|些|一点|点|好|适合|推荐)/.test(message);
+  const hasComparativeTone = /(更|些|一点|点|好|适合|推荐|不那么|没那么|低|少|淡)/.test(message);
 
   // 这类句子不是新筛选，而是在当前候选里按某个维度做取舍：
   // “哪个控油些 / 哪款更清爽 / 谁更舒适 / 哪个更适合通勤”都应继续走 compare。
@@ -267,7 +369,7 @@ function looksLikeRefinement(message, parsed) {
       Number.isFinite(parsed.price.minPrice) ||
       parsed.negativeTerms.length > 0 ||
       parsed.preferences.length > 0 ||
-      /(再|更|便宜|贵|预算|以内|以下|不超过|不要超过|换个|换一款|轻薄|控油|防水|无糖)/.test(message)
+      /(再|更|便宜|贵|预算|以内|以下|不超过|不要超过|换个|换一款|轻薄|控油|防水|无糖|低糖|不甜|甜度|清淡)/.test(message)
   );
 }
 
@@ -495,6 +597,7 @@ export function resolveReferencedProducts(session, message) {
 
 export function resolveComparisonProducts(session, message) {
   const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
+  const recentComparisonProducts = session.comparisonProducts?.length ? session.comparisonProducts : [];
   if (/(前两|前2|前二)/.test(message)) {
     return referenceProducts.slice(0, 2);
   }
@@ -510,21 +613,23 @@ export function resolveComparisonProducts(session, message) {
     return [];
   }
 
-  if (/(这两|两款|两个|这两个)/.test(message) && session.lastProducts?.length >= 2) {
+  if (/(这两|两款|两个|这两个)/.test(message) && (recentComparisonProducts.length >= 2 || session.lastProducts?.length >= 2)) {
     // 连续对比里用户常说“这两款哪个更适合通勤”，此时参照物应是上一轮已经收窄出的对比集合，
     // 而不是最初推荐列表的前三个，否则会把未参与上一轮对比的商品重新带进来。
-    return session.lastProducts.slice(0, 2);
+    return (recentComparisonProducts.length >= 2 ? recentComparisonProducts : session.lastProducts).slice(0, 2);
   }
 
   if (
     (/(选哪个|哪个好|哪款好|哪个更|哪款更|更适合|更推荐|更健康|健康点|健康些|健康一点|哪个健康|哪款健康|哪一个健康|更天然|天然些)/.test(message) ||
       looksLikePreferenceDecision(message, { preferences: extractPreferences(message) })) &&
-    session.lastProducts?.length >= 2 &&
-    session.lastProducts.length < referenceProducts.length
+    (recentComparisonProducts.length >= 2 || session.lastProducts?.length >= 2) &&
+    ((recentComparisonProducts.length >= 2 && recentComparisonProducts.length < referenceProducts.length) ||
+      session.lastProducts.length < referenceProducts.length)
   ) {
-    // 用户在对比之后补充“我主要通勤，选哪个”时，虽然没有说“这两款”，真实参照物仍是上一轮对比集合。
-    // 这里优先沿用更窄的 lastProducts，让决策建议只在刚比较过的商品之间产生。
-    return session.lastProducts;
+    // 用户在对比之后可能先追问某一款，再补一句“哪款不那么甜/哪个更清爽”。
+    // 单品追问会把 lastProducts 缩成 1 个，因此这里优先使用最近一次 comparisonProducts，
+    // 保证后续取舍仍发生在刚比较过的商品之间，而不是退回第一轮全部候选。
+    return recentComparisonProducts.length >= 2 ? recentComparisonProducts : session.lastProducts;
   }
 
   const nameMatchedProducts = resolveProductsByName(referenceProducts, message);
@@ -551,6 +656,7 @@ export function restoreSessionFromHistory(session, rawHistory = [], products = [
   session.turns = [];
   session.lastProducts = [];
   session.referenceProducts = [];
+  session.comparisonProducts = [];
   session.needs = [];
   session.activeNeedId = "";
   session.nextNeedSeq = 0;
@@ -625,11 +731,18 @@ export function appendTurn(session, role, content) {
 
 export function rememberProducts(session, products, options = {}) {
   const updateReference = options.updateReference !== false;
+  const updateComparison = options.updateComparison === true;
   session.lastProducts = products;
   if (updateReference) {
     // referenceProducts 是“第几个/这几款”追问的候选基准。普通搜索或继续筛选会刷新它；
     // 单个商品解释这类 refer 回答不会覆盖它，避免用户问完第二款后再问第三款时丢失原始候选列表。
     session.referenceProducts = products;
+    session.comparisonProducts = [];
+  }
+  if (updateComparison) {
+    // comparisonProducts 只记录最近一次结构化对比范围。它和 referenceProducts 分开保存，
+    // 这样“比较2和3 -> 追问第2款 -> 哪款不那么甜”仍能回到刚比较过的两款里决策。
+    session.comparisonProducts = products;
   }
   session.state.lastProductIds = products.map((product) => product.productId);
   persistSessionToActiveNeed(session);

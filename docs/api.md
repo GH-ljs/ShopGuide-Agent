@@ -6,7 +6,7 @@
 http://localhost:3001
 ```
 
-## 统一错误格式
+## 1. 统一错误格式
 
 普通 JSON 接口错误返回：
 
@@ -26,32 +26,20 @@ event: error
 data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","details":"..."}}
 ```
 
-当前错误码：
+错误码：
 
-```text
-INVALID_JSON
-VALIDATION_ERROR
-NOT_FOUND
-RETRIEVAL_ERROR
-MODEL_ERROR
-INTERNAL_ERROR
-```
+| 错误码 | 常见原因 |
+| --- | --- |
+| `INVALID_JSON` | 请求体不是合法 JSON |
+| `VALIDATION_ERROR` | 请求参数缺失，例如 `message` 为空 |
+| `NOT_FOUND` | 商品或图片不存在 |
+| `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant 未启动、Embedding 异常 |
+| `MODEL_ERROR` | 模型调用失败，例如 API Key、模型名、余额、权限或网络问题 |
+| `INTERNAL_ERROR` | 未预期服务端异常 |
 
-错误码含义：
+说明：`NETWORK_ERROR` 是 Android 客户端本地归类，客户端连不上后端时收不到后端响应。
 
-| 错误码 | 常见原因 | 客户端用户提示 |
-| --- | --- | --- |
-| `NETWORK_ERROR` | Android 客户端连不上后端，例如后端没启动、地址错误 | 无法连接后端服务，请确认服务已启动。 |
-| `VALIDATION_ERROR` | 请求参数缺失，例如 `message` 为空 | 请输入你的购物需求。 |
-| `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant 未启动、Embedding/向量索引异常 | 商品检索暂时不可用，请稍后再试。 |
-| `MODEL_ERROR` | 模型调用失败，例如 API Key、模型名、权限、余额或网络问题 | AI 生成暂时不可用，请稍后再试。 |
-| `NOT_FOUND` | 商品或图片不存在 | 没有找到对应资源。 |
-| `INVALID_JSON` | 请求体不是合法 JSON | 请求格式异常，请稍后再试。 |
-| `INTERNAL_ERROR` | 未预期服务端异常 | 服务暂时不可用，请稍后再试。 |
-
-说明：`NETWORK_ERROR` 是客户端本地归类，后端不会返回这个错误码，因为客户端连不上后端时收不到后端响应。
-
-## GET /api/health
+## 2. GET `/api/health`
 
 健康检查接口。
 
@@ -67,31 +55,45 @@ INTERNAL_ERROR
   "embeddingProvider": "ark",
   "embeddingDimension": 1024,
   "modelEnabled": true,
-  "llmProvider": "deepseek",
-  "llmModel": "deepseek-chat"
+  "llmProvider": "ark",
+  "llmModel": "ep-xxx",
+  "hotQueryCache": {
+    "size": 2,
+    "hits": 1,
+    "misses": 3,
+    "writes": 2,
+    "ttlMs": 1800000
+  },
+  "sessionPersistence": {
+    "type": "sqlite",
+    "path": "D:\\code\\agent\\ShopGuide-Agent\\server\\.data\\shopguide_sessions.db"
+  }
 }
 ```
 
-字段说明：
+## 3. GET `/api/performance`
 
-- `ok`: 服务是否正常。
-- `productCount`: 已加载商品数量。
-- `vectorStore`: 当前向量检索模式，例如 `local` 或 `qdrant`。
-- `qdrantUrl`: Qdrant 地址。
-- `qdrantCollection`: Qdrant collection 名称。
-- `embeddingProvider`: 当前 embedding provider，例如 `local` 或 `ark`。
-- `embeddingDimension`: 当前 embedding 向量维度。
-- `modelEnabled`: 是否已配置聊天模型 API Key。
-- `llmProvider`: 当前聊天模型 provider，例如 `ark` 或 `deepseek`。
-- `llmModel`: 当前聊天模型名称或 endpoint id。
+查看热门查询缓存统计。
 
-注意：`/api/health` 是开发排障接口，普通客户端 UI 不直接展示 Qdrant、Embedding、LLM 等内部组件状态。
+```json
+{
+  "ok": true,
+  "hotQueryCache": {
+    "enabled": true,
+    "size": 2,
+    "hits": 1,
+    "misses": 3,
+    "writes": 2,
+    "ttlMs": 1800000
+  }
+}
+```
 
-## GET /api/products
+缓存只用于不依赖上下文的新搜索，不用于“第二款怎么样”“比较2和3”等多轮追问。
 
-返回简化商品列表，主要用于调试或客户端预览。
+## 4. GET `/api/products`
 
-响应示例：
+返回简化商品卡片列表，主要用于调试或预览。
 
 ```json
 [
@@ -100,13 +102,23 @@ INTERNAL_ERROR
     "title": "珊珂洗颜专科绵润泡沫洁面乳细腻丰富泡沫温和清洁洁面120g",
     "brand": "珊珂",
     "category": "美妆护肤",
+    "subCategory": "洁面",
     "price": 52,
-    "imagePath": "D:\\code\\agent\\ShopGuide-Agent\\ecommerce_agent_dataset\\1_美妆护肤\\images\\p_beauty_011_live.jpg"
+    "imageUrl": "/api/products/p_beauty_011/image",
+    "reason": "..."
   }
 ]
 ```
 
-## POST /api/chat
+## 5. GET `/api/products/:productId`
+
+返回商品详情页数据，包括描述、SKU、FAQ、用户评价和图片地址。
+
+## 6. GET `/api/products/:productId/image`
+
+返回商品图片文件。
+
+## 7. POST `/api/chat`
 
 导购对话接口。响应类型是 `text/event-stream`。
 
@@ -114,19 +126,27 @@ INTERNAL_ERROR
 
 ```json
 {
+  "deviceId": "demo-device",
   "conversationId": "demo-user-1",
-  "message": "推荐一款防晒霜"
+  "message": "推荐一款防晒霜",
+  "limit": 6,
+  "history": []
 }
 ```
 
 字段说明：
 
-- `conversationId`: 会话 ID。相同 ID 会复用内存会话记忆。
-- `message`: 用户输入，不能为空。
+| 字段 | 说明 |
+| --- | --- |
+| `deviceId` | 匿名设备 ID，用于后端会话隔离和持久化。旧客户端不传时默认为 `anonymous` |
+| `conversationId` | 会话 ID，和 `deviceId` 组合后定位一段会话记忆 |
+| `message` | 用户本轮输入，不能为空 |
+| `limit` | 最多返回多少个商品卡片，服务端仍有上限保护 |
+| `history` | 客户端最近历史，用于数据库不可用或旧数据缺失时兜底恢复上下文 |
 
-## SSE 事件
+### SSE 事件
 
-### token
+#### `token`
 
 流式文本片段。
 
@@ -135,41 +155,81 @@ event: token
 data: {"content":"根据你的需求"}
 ```
 
-### products
+#### `meta`
+
+调试信息，客户端可以忽略。当前主要用于缓存命中和首 token 统计。
+
+```text
+event: meta
+data: {"type":"first_token","firstTokenMs":214,"cacheHit":false}
+```
+
+#### `comparison`
+
+结构化商品对比卡。只有对比/决策类问题会返回。
+
+```json
+{
+  "comparison": {
+    "title": "商品对比",
+    "conclusion": "明确结论：更推荐第 1 款 ...",
+    "recommendedProductId": "p_food_014",
+    "columns": [
+      {
+        "productId": "p_food_014",
+        "label": "第 1 款",
+        "title": "农夫山泉 东方树叶 无糖茉莉花茶饮料...",
+        "brand": "农夫山泉"
+      }
+    ],
+    "rows": [
+      {
+        "label": "价格",
+        "values": [
+          { "productId": "p_food_014", "value": "75 元" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+#### `products`
 
 结构化商品卡片。
 
 ```text
 event: products
-data: {"products":[{"productId":"p_beauty_023","title":"...","brand":"理肤泉","category":"美妆护肤","subCategory":"防晒","price":268,"imagePath":"...","reason":"..."}]}
+data: {"products":[{"productId":"p_beauty_023","title":"...","brand":"理肤泉","category":"美妆护肤","subCategory":"防晒","price":268,"imageUrl":"/api/products/p_beauty_023/image","reason":"..."}]}
 ```
 
-### done
+#### `done`
 
-本轮对话完成。
+本轮完成。
 
 ```text
 event: done
-data: {"ok":true,"conversationId":"demo-user-1"}
+data: {"ok":true,"conversationId":"demo-user-1","deviceId":"demo-device"}
 ```
 
-### error
+#### `error`
 
-本轮对话发生错误。
+本轮发生错误。
 
 ```text
 event: error
-data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","details":"..."}}
+data: {"error":{"code":"MODEL_ERROR","message":"AI 生成暂时不可用","details":"..."}}
 ```
 
-## POST /api/conversations/reset
+## 8. POST `/api/conversations/reset`
 
-重置指定会话的内存状态。客户端新建对话、用户点击“重新开始”或调试时可以调用。
+重置指定 `deviceId + conversationId` 的后端会话记忆。
 
 请求示例：
 
 ```json
 {
+  "deviceId": "demo-device",
   "conversationId": "demo-user-1"
 }
 ```
@@ -179,83 +239,51 @@ data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","de
 ```json
 {
   "ok": true,
+  "deviceId": "demo-device",
   "conversationId": "demo-user-1",
   "session": {
+    "deviceId": "demo-device",
     "conversationId": "demo-user-1",
-    "state": {
-      "category": "",
-      "itemIntent": null,
-      "maxPrice": null,
-      "minPrice": null,
-      "excludeTerms": [],
-      "preferences": [],
-      "lastProductIds": []
-    },
     "turnCount": 0,
-    "lastProductIds": []
+    "lastProductIds": [],
+    "referenceProductIds": [],
+    "comparisonProductIds": []
   }
 }
 ```
 
-## POST /api/debug/retrieve
+## 9. POST `/api/debug/retrieve`
 
-检索调试接口。用于查看 RAG 检索链路，不建议作为正式客户端用户功能展示。
+检索调试接口，用于查看意图、会话状态、过滤范围和最终候选。不建议作为正式用户功能展示。
 
 请求示例：
 
 ```json
 {
+  "deviceId": "demo-device",
   "conversationId": "debug-1",
-  "message": "推荐一款适合油皮的防晒霜",
+  "message": "比较2和3",
   "limit": 4,
-  "includeMemory": false
+  "includeMemory": true
 }
 ```
 
-字段说明：
+响应中包含：
 
-- `conversationId`: 会话 ID。
-- `message`: 要调试的用户问题。
-- `limit`: 返回商品数量，默认 4。
-- `includeMemory`: 是否使用该会话已有记忆。调试单轮检索时建议传 `false`。
+- `turnIntent`：本轮意图和解析结果。
+- `retrievalScope`：检索范围，例如 `full_catalog`、`last_products`、`comparison_candidates`。
+- `session`：当前会话记忆快照。
+- `retrievalQuery`：实际用于语义检索的 query。
+- `retrieval.products`：本轮候选商品卡片。
 
-响应示例：
-
-```json
-{
-  "ok": true,
-  "conversationId": "debug-1",
-  "includeMemory": false,
-  "originalMessage": "推荐一款适合油皮的防晒霜",
-  "retrievalQuery": "美妆护肤 防晒 油皮 推荐一款适合油皮的防晒霜",
-  "retrieval": {
-    "parsed": {
-      "category": "美妆护肤",
-      "itemIntent": "防晒",
-      "maxPrice": null,
-      "minPrice": null,
-      "negativeTerms": []
-    },
-    "counts": {
-      "totalProducts": 100,
-      "categoryCandidates": 25,
-      "filteredCandidates": 3,
-      "vectorMatches": 3,
-      "finalProducts": 3
-    },
-    "candidatePreview": [],
-    "vectorMatches": [],
-    "products": []
-  }
-}
-```
-
-## PowerShell 调试示例
+## 10. PowerShell 调试示例
 
 ```powershell
 $body = @{
+  deviceId = "demo-device"
   conversationId = "demo-1"
   message = "推荐一款防晒霜"
+  limit = 6
 } | ConvertTo-Json -Compress
 
 $r = Invoke-WebRequest `
@@ -268,10 +296,10 @@ $r.Content | Set-Content -Encoding UTF8 response.txt
 notepad response.txt
 ```
 
-## curl.exe 调试示例
+## 11. curl.exe 调试示例
 
 ```powershell
 curl.exe -N -X POST "http://localhost:3001/api/chat" `
   -H "Content-Type: application/json; charset=utf-8" `
-  -d "{\"conversationId\":\"demo-1\",\"message\":\"推荐一款防晒霜\"}"
+  -d "{\"deviceId\":\"demo-device\",\"conversationId\":\"demo-1\",\"message\":\"推荐一款防晒霜\",\"limit\":6}"
 ```
