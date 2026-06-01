@@ -1,6 +1,8 @@
 package com.shopguide.agent.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyRow
@@ -20,6 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -36,6 +42,7 @@ import com.shopguide.agent.model.ProductCard
 @Composable
 fun MessageBubble(
     message: ChatMessage,
+    onRetry: (ChatMessage) -> Unit,
     onProductClick: (ProductCard) -> Unit
 ) {
     val isUser = message.role == MessageRole.User
@@ -52,14 +59,27 @@ fun MessageBubble(
             val shouldShowTextBubble = message.text.isNotBlank() && (isUser || message.comparison == null)
             if (shouldShowTextBubble) {
                 if (isUser) {
-                    UserBubble(text = message.text)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (message.sendFailed) {
+                            RetrySendIcon(onClick = { onRetry(message) })
+                        }
+                        UserBubble(text = message.text)
+                    }
                 } else {
                     AssistantBubble(text = message.text)
                 }
             }
 
+            if (!isUser && message.fallbackNotice.isNotBlank()) {
+                if (shouldShowTextBubble) Spacer(modifier = Modifier.height(8.dp))
+                FallbackNotice(text = message.fallbackNotice)
+            }
+
             if (!isUser && message.comparison != null) {
-                if (shouldShowTextBubble) Spacer(modifier = Modifier.height(10.dp))
+                if (shouldShowTextBubble || message.fallbackNotice.isNotBlank()) Spacer(modifier = Modifier.height(10.dp))
                 ComparisonCardView(comparison = message.comparison)
             }
 
@@ -77,6 +97,63 @@ fun MessageBubble(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun RetrySendIcon(onClick: () -> Unit) {
+    Canvas(
+        modifier = Modifier
+            .size(34.dp)
+            .clickable(onClick = onClick)
+            .padding(5.dp)
+    ) {
+        val stroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+        val color = Color(0xFFE5484D)
+        val inset = 3.dp.toPx()
+        val arcSize = androidx.compose.ui.geometry.Size(
+            width = size.width - inset * 2,
+            height = size.height - inset * 2
+        )
+
+        // 红色环形箭头表示“本轮发送失败，可点击重试”。箭头头部单独绘制，避免图标看起来像字母 C。
+        drawArc(
+            color = color,
+            startAngle = 35f,
+            sweepAngle = 300f,
+            useCenter = false,
+            topLeft = androidx.compose.ui.geometry.Offset(inset, inset),
+            size = arcSize,
+            style = stroke
+        )
+
+        val arrowHead = Path().apply {
+            moveTo(size.width * 0.78f, size.height * 0.10f)
+            lineTo(size.width * 0.90f, size.height * 0.36f)
+            lineTo(size.width * 0.62f, size.height * 0.32f)
+        }
+        drawPath(
+            path = arrowHead,
+            color = color
+        )
+    }
+}
+
+@Composable
+private fun FallbackNotice(text: String) {
+    Card(
+        modifier = Modifier.widthIn(max = 360.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7E8)),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Color(0xFFFFD79A)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Text(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            text = text,
+            color = Color(0xFF8A5A00),
+            style = MaterialTheme.typography.bodySmall.copy(lineHeight = 17.sp)
+        )
     }
 }
 

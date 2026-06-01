@@ -24,7 +24,7 @@ Android 原生 App
 - **商品数据加载**：约 100 条商品，覆盖美妆护肤、数码电子、服饰运动、食品饮料 4 个类目。
 - **RAG 检索链路**：支持本地向量检索和 Qdrant 向量数据库。
 - **Embedding**：支持本地哈希向量和 Ark embedding；Qdrant collection 建议按 embedding 方案区分。
-- **模型接入**：支持 DeepSeek 和 Doubao/Ark 聊天模型；无 Key 时可用本地确定性回答兜底。
+- **模型接入与降级**：支持 DeepSeek 和 Doubao/Ark 聊天模型；无 Key 或模型生成失败时，可用本地确定性回答兜底，并通过 `fallback` meta 提示客户端。
 - **LLM Plan + Validator**：LLM 负责语义解析，后端校验意图、范围、序号、预算和排除词，避免模型越界。
 - **SSE 流式接口**：`/api/chat` 返回 `token`、`meta`、`comparison`、`products`、`done`、`error`。
 - **多轮记忆**：按 `deviceId + conversationId` 管理结构化会话状态，支持多需求隔离、旧需求恢复、序号指代和对比后追问。
@@ -49,7 +49,7 @@ Android 原生 App
 
 - **Android 原生客户端**：Kotlin + Jetpack Compose + Material3。
 - **聊天界面**：消息列表、输入框、发送状态、后端连接状态。
-- **SSE 客户端**：解析后端 `token`、`meta`、`comparison`、`products`、`done`、`error`。
+- **SSE 客户端**：解析后端 `token`、`meta`、`comparison`、`products`、`done`、`error`，并展示模型降级轻提示。
 - **流式渲染**：AI 回复分片显示。
 - **商品卡片**：横向商品卡片，展示图片、标题、品牌、价格和类目。
 - **商品详情页**：点击卡片进入详情，查看描述、SKU、FAQ、评价等证据。
@@ -76,6 +76,7 @@ Android 原生 App
 - `retrieval-quality.test.js`：检索质量基线。
 - `performance.test.js`：热门查询缓存和首 token 指标。
 - `session-persistence.test.js`：`deviceId + conversationId` 会话隔离和持久化恢复。
+- `fallback.test.js`：模型生成失败时自动降级为本地导购回答，并保留商品卡片和降级提示。
 - `smoke.test.js`：后端端到端 smoke。
 
 交付前建议至少运行：
@@ -85,6 +86,7 @@ cd server
 npm run test:answer
 node src/__tests__/memory-eval.test.js
 npm run test:session
+npm run test:fallback
 npm run test:performance
 npm run test:smoke
 ```
@@ -102,6 +104,7 @@ npm run test:smoke
 
 - 热门查询缓存：已完成。
 - 首 token 可观测指标：已完成，`meta` SSE 和 `/api/performance` 可查看。
+- 模型不可用自动降级：已完成，LLM 失败时后端退回本地规则回答，客户端展示轻提示，主推荐链路不中断。
 - 端侧体验打磨：已完成商品卡片、详情页、多会话、自动滚动和对比卡；骨架屏未保留，因为实际体验割裂。
 
 ## 6. 交付风险与注意事项

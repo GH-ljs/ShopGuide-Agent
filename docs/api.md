@@ -157,11 +157,18 @@ data: {"content":"根据你的需求"}
 
 #### `meta`
 
-调试信息，客户端可以忽略。当前主要用于缓存命中和首 token 统计。
+调试信息，客户端可以忽略。当前主要用于缓存命中、首 token 统计和模型降级提示。
 
 ```text
 event: meta
 data: {"type":"first_token","firstTokenMs":214,"cacheHit":false}
+```
+
+当模型生成失败但检索链路可用时，后端会降级为本地导购规则回答，并额外发送：
+
+```text
+event: meta
+data: {"type":"fallback","fallback":true,"reason":"MODEL_ERROR","message":"当前 AI 生成服务暂时不可用，已使用本地导购规则完成推荐。"}
 ```
 
 #### `comparison`
@@ -209,7 +216,7 @@ data: {"products":[{"productId":"p_beauty_023","title":"...","brand":"理肤泉"
 
 ```text
 event: done
-data: {"ok":true,"conversationId":"demo-user-1","deviceId":"demo-device"}
+data: {"ok":true,"conversationId":"demo-user-1","deviceId":"demo-device","fallback":false,"fallbackReason":"","fallbackMessage":""}
 ```
 
 #### `error`

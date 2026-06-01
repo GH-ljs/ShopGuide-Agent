@@ -71,6 +71,7 @@ Model streaming: enabled
 ```powershell
 npm run test:answer
 npm run test:session
+npm run test:fallback
 npm run test:performance
 npm run test:retrieval-quality
 npm run test:smoke
@@ -82,6 +83,7 @@ node src/__tests__/memory-eval.test.js
 ```text
 Answer tests passed.
 Session persistence tests passed.
+Fallback tests passed.
 Performance tests passed.
 Retrieval quality baseline passed.
 Smoke tests passed.
@@ -151,6 +153,7 @@ event: done
 - 商品价格、标题、类目不编造。
 - 无结果场景不会硬推荐商品。
 - 对比问题应包含 `comparison` 事件，且对比列和商品卡片数量一致。
+- 模型服务不可用时应包含 `meta type=fallback`，但仍然返回 `token`、`products` 和 `done`。
 
 ## 5. Android 客户端验收
 
@@ -164,6 +167,7 @@ event: done
 - 点击商品卡片能进入详情页。
 - 详情页能返回聊天页。
 - 对比问题能看到结构化对比卡。
+- 如果后端触发模型降级，AI 回复下方应显示“已使用本地导购规则完成推荐”的轻提示。
 - 切换会话后历史消息仍在。
 - 无结果问题不会展示错误商品卡片。
 
@@ -194,7 +198,7 @@ npm run qdrant:health
 
 ### 模型服务不可用
 
-如果 `/api/chat` 返回模型错误，先用本地兜底验证链路：
+如果聊天模型服务不可用，后端会自动降级为本地导购规则回答，SSE 中会出现 `meta type=fallback`，客户端会显示轻提示。也可以手动清空 Key 来验证无模型链路：
 
 ```env
 LLM_PROVIDER=deepseek

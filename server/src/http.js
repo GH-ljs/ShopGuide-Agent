@@ -267,6 +267,9 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const finalAnswerState = { ...answerState, answerMode };
 
     let answerText = "";
+    let fallbackUsed = false;
+    let fallbackReason = "";
+    let fallbackMessage = "";
     if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
@@ -276,11 +279,23 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
           writeSse(res, "token", { content: token });
         }
       } catch (error) {
-        // 模型调用失败单独标成 MODEL_ERROR，常见原因是 API Key、模型名、权限或网络问题。
-        throw Object.assign(new Error(error.message), {
-          code: ERROR_CODES.MODEL_ERROR,
-          userMessage: "AI 生成暂时不可用"
+        fallbackUsed = true;
+        fallbackReason = ERROR_CODES.MODEL_ERROR;
+        fallbackMessage = "当前 AI 生成服务暂时不可用，已使用本地导购规则完成推荐。";
+        console.warn("[/api/chat] model generation failed, fallback to local answer:", error.message);
+        writeSse(res, "meta", {
+          type: "fallback",
+          fallback: true,
+          reason: fallbackReason,
+          message: fallbackMessage
         });
+
+        // 模型生成是增强层，检索到的商品候选才是可信事实来源。模型失败时改用同一批 answerProducts
+        // 生成本地确定性回答，保证“回答文本、对比组件、商品卡片”仍然来自同一组可校验商品。
+        const localAnswer = buildLocalAnswer(message, answerProducts, history, finalAnswerState);
+        if (answerText.trim()) answerText += "\n\n";
+        answerText += localAnswer;
+        await streamText(res, localAnswer, () => markFirstToken({ cacheHit: false, fallback: true }));
       }
     } else {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
@@ -290,7 +305,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
     }
 
-    if (config.hotQueryCacheEnabled && turnIntent.type === TURN_INTENTS.NEW_SEARCH && answerMode === "") {
+    if (config.hotQueryCacheEnabled && turnIntent.type === TURN_INTENTS.NEW_SEARCH && answerMode === "" && !fallbackUsed) {
       const cacheKey = buildHotQueryCacheKey({ turnIntent, state, message, limit: productLimit });
       // 只在成功生成完整回答后写缓存。这样缓存里永远是“文本、卡片、结构化约束已对齐”的结果，
       // 不会把检索异常、半截模型输出或失败响应复用给后续用户。
@@ -318,7 +333,14 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
 
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
-    writeSse(res, "done", { ok: true, conversationId, deviceId });
+    writeSse(res, "done", {
+      ok: true,
+      conversationId,
+      deviceId,
+      fallback: fallbackUsed,
+      fallbackReason,
+      fallbackMessage
+    });
   } catch (error) {
     console.error("[/api/chat] failed:", error);
     const code = error.code || ERROR_CODES.INTERNAL_ERROR;

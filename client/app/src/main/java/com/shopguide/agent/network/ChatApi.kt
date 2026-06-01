@@ -34,6 +34,7 @@ object ChatApi {
         message: String,
         history: List<ChatMessage>,
         onToken: (String) -> Unit,
+        onFallback: (String) -> Unit,
         onComparison: (ComparisonCard) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
@@ -89,7 +90,7 @@ object ChatApi {
 
                         line.startsWith("data:") -> {
                             val data = line.removePrefix("data:").trim()
-                            handleEvent(eventName, data, onToken, onComparison, onProducts, onDone, onError)
+                            handleEvent(eventName, data, onToken, onFallback, onComparison, onProducts, onDone, onError)
                         }
                     }
                 }
@@ -112,6 +113,7 @@ object ChatApi {
         eventName: String,
         data: String,
         onToken: (String) -> Unit,
+        onFallback: (String) -> Unit,
         onComparison: (ComparisonCard) -> Unit,
         onProducts: (List<ProductCard>) -> Unit,
         onDone: () -> Unit,
@@ -127,6 +129,12 @@ object ChatApi {
             "meta" -> {
                 // meta 是后端性能评测/缓存命中信息。当前聊天 UI 不直接展示它，
                 // 保留解析分支可以避免新增 SSE 事件时被误认为未知错误。
+                val meta = JSONObject(data)
+                if (meta.optString("type") == "fallback" && meta.optBoolean("fallback")) {
+                    // fallback 是给用户看的降级提示：回答仍然基于同一批商品候选，只是生成方式从 LLM 切到本地规则。
+                    // 客户端把它单独渲染为轻提示，而不是拼进正文，避免影响后续多轮上下文恢复。
+                    onFallback(meta.optString("message").ifBlank { "当前 AI 生成服务暂时不可用，已使用本地导购规则完成推荐。" })
+                }
             }
 
             "products" -> {

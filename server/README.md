@@ -120,7 +120,7 @@ ARK_MODEL=你的 Ark 聊天模型 endpoint id
 ARK_API_KEY=你的 Ark 聊天模型 API Key
 ```
 
-`EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关。可以用 Ark 做 embedding，同时用 DeepSeek 做聊天生成。没有可用模型 Key 时，后端会走本地确定性回答，保证 Demo 不因为模型配置中断。
+`EMBEDDING_PROVIDER` 和 `LLM_PROVIDER` 是两套独立开关。可以用 Ark 做 embedding，同时用 DeepSeek 做聊天生成。没有可用模型 Key 时，后端会走本地确定性回答；如果模型生成过程中失败，后端也会自动降级为本地规则回答，并通过 `meta type=fallback` 通知客户端展示轻提示，保证 Demo 不因为模型服务短暂异常中断。
 
 ### 4. 热门查询缓存
 
@@ -153,7 +153,7 @@ SESSION_STORE_PATH=.data/shopguide_sessions.db
   -> updateSessionState 更新结构化需求
   -> buildRetrievalQuery 构造检索 query
   -> retrieveProductsWithState 执行过滤和排序
-  -> buildLocalAnswer 或 streamModelAnswer 生成回答
+  -> buildLocalAnswer 或 streamModelAnswer 生成回答，模型失败时降级为本地回答
   -> buildComparisonPayload 按需生成对比卡
   -> buildProductCards 生成商品卡片
   -> 通过 SSE 输出 token / meta / comparison / products / done
@@ -304,6 +304,18 @@ event: done        # 本轮完成
 event: error       # 结构化错误
 ```
 
+当聊天模型不可用但检索链路正常时，后端不会直接返回 `MODEL_ERROR`，而是输出降级提示并继续完成本轮：
+
+```text
+event: meta
+data: {"type":"fallback","fallback":true,"reason":"MODEL_ERROR","message":"当前 AI 生成服务暂时不可用，已使用本地导购规则完成推荐。"}
+
+event: done
+data: {"ok":true,"conversationId":"demo","deviceId":"demo-device","fallback":true,"fallbackReason":"MODEL_ERROR"}
+```
+
+只有检索失败、请求参数错误、内部异常等无法得到可信商品候选的情况，才会返回 `error` 事件。
+
 ### POST `/api/debug/retrieve`
 
 检索调试接口，用于查看 RAG 过程。
@@ -339,12 +351,21 @@ event: error       # 结构化错误
 | --- | --- |
 | `VALIDATION_ERROR` | 请求参数不合法，例如 `message` 为空 |
 | `RETRIEVAL_ERROR` | 商品检索失败，例如 Qdrant、Embedding 或向量索引异常 |
-| `MODEL_ERROR` | 模型生成失败，例如 API Key、模型名、权限或网络问题 |
+| `MODEL_ERROR` | 模型生成失败，例如 API Key、模型名、权限或网络问题；当前聊天主链路会优先自动降级，通常以 `meta type=fallback` 形式通知客户端 |
 | `NOT_FOUND` | 商品、图片或接口不存在 |
 | `INVALID_JSON` | 请求体不是合法 JSON |
 | `INTERNAL_ERROR` | 未预期服务端异常 |
 
-Android 客户端会额外把“连不上后端”的情况归类为 `NETWORK_ERROR`，因为这类错误发生时收不到后端响应。
+这些错误码本身不会在服务端界面显示，服务端只负责把它们写进 HTTP JSON 或 SSE `error` 事件。实际可见位置在 Android 客户端：
+
+- `/api/chat` 返回 SSE `error` 时，`ChatApi.kt` 会解析 `error.code`，`ChatScreen.kt` 会把错误文案和错误码写到当前助手消息气泡里。
+- 客户端连不上后端时收不到服务端错误，所以 `ChatApi.kt` 会在本地归类为 `NETWORK_ERROR`。
+- 普通 HTTP 接口非 2xx 时，客户端归类为 `HTTP_ERROR`。
+
+客户端侧的展示逻辑是：
+
+- `NETWORK_ERROR`、`HTTP_ERROR`、`RETRIEVAL_ERROR`、`VALIDATION_ERROR`、`INTERNAL_ERROR` 等会在助手消息气泡中显示友好错误文案和“错误码：xxx”，同时标记本轮发送失败，用户消息气泡前显示红色重试图标。
+- `MODEL_ERROR` 如果已被后端降级处理，则不标记发送失败，只显示模型降级轻提示。
 
 ## 测试和自检
 
@@ -357,6 +378,7 @@ npm run test:retrieval-quality
 npm run test:embedding
 npm run test:performance
 npm run test:session
+npm run test:fallback
 npm run test:smoke
 npm run demo:retrieve
 ```

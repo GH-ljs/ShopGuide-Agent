@@ -221,7 +221,9 @@ object ConversationStore {
             role = MessageRole.valueOf(optString("role", MessageRole.Assistant.name)),
             text = optString("text"),
             products = products,
-            comparison = optJSONObject("comparison")?.toComparisonCard()
+            comparison = optJSONObject("comparison")?.toComparisonCard(),
+            fallbackNotice = optString("fallbackNotice"),
+            sendFailed = optBoolean("sendFailed", false)
         )
     }
 
@@ -247,6 +249,8 @@ object ConversationStore {
             .put("text", text)
             .put("products", productsJson)
             .put("comparison", comparison?.toJson())
+            .put("fallbackNotice", fallbackNotice)
+            .put("sendFailed", sendFailed)
     }
 
     private fun JSONObject.toComparisonCard(): ComparisonCard {

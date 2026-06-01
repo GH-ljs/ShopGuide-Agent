@@ -199,18 +199,35 @@ fun ChatScreen() {
         reloadCurrentConversation(nextConversationId)
     }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String, retryMessageId: Int? = null) {
         val userText = text.trim()
         if (userText.isEmpty() || isStreaming) return
-        val historyForRequest = buildHistoryForRequest(messages)
-
-        messages.add(
-            ChatMessage(
-                id = nextMessageId(messages),
-                role = MessageRole.User,
-                text = userText
-            )
+        val historyForRequest = buildHistoryForRequest(
+            messages.filterNot { message ->
+                // 重试时当前失败用户消息会作为本轮 message 单独发送，不能再塞进 history，否则后端会看到重复的一轮用户输入。
+                message.id == retryMessageId || message.sendFailed || isFailureAssistantMessage(message)
+            }
         )
+
+        val userMessageId = retryMessageId ?: nextMessageId(messages)
+        if (retryMessageId == null) {
+            messages.add(
+                ChatMessage(
+                    id = userMessageId,
+                    role = MessageRole.User,
+                    text = userText
+                )
+            )
+        } else {
+            updateAssistantMessage(messages, userMessageId) { old ->
+                old.copy(sendFailed = false)
+            }
+            val retryIndex = messages.indexOfFirst { it.id == userMessageId }
+            if (retryIndex >= 0 && retryIndex + 1 < messages.size && isFailureAssistantMessage(messages[retryIndex + 1])) {
+                // 同一条消息点击重试时，移除上一轮错误提示，避免界面同时保留“失败”和“正在重新生成”的两套助手回复。
+                messages.removeAt(retryIndex + 1)
+            }
+        }
 
         val assistantMessageId = nextMessageId(messages)
         messages.add(
@@ -243,6 +260,16 @@ fun ChatScreen() {
                             }
                         }
                     },
+                    onFallback = { notice ->
+                        scope.launch {
+                            pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
+                            // 降级提示来自后端结构化 meta 事件，单独挂到当前助手消息上展示；
+                            // 不拼进正文，避免下一轮 history 恢复时把“模型不可用”误当成商品推荐事实。
+                            updateAssistantMessage(messages, assistantMessageId) { old ->
+                                old.copy(fallbackNotice = notice)
+                            }
+                        }
+                    },
                     onComparison = { comparison ->
                         scope.launch {
                             pendingStreamScrollToBottom = shouldAutoScroll || isNearConversationBottom(listState)
@@ -267,6 +294,9 @@ fun ChatScreen() {
                     },
                     onError = { error ->
                         scope.launch {
+                            updateAssistantMessage(messages, userMessageId) { old ->
+                                old.copy(sendFailed = true)
+                            }
                             updateAssistantMessage(messages, assistantMessageId) { old ->
                                 old.copy(text = friendlyErrorMessage(error, old.text))
                             }
@@ -311,7 +341,14 @@ fun ChatScreen() {
         }
     }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text, messages.lastOrNull()?.products?.size, messages.lastOrNull()?.comparison) {
+    LaunchedEffect(
+        messages.size,
+        messages.lastOrNull()?.text,
+        messages.lastOrNull()?.products?.size,
+        messages.lastOrNull()?.comparison,
+        messages.lastOrNull()?.fallbackNotice,
+        messages.lastOrNull()?.sendFailed
+    ) {
         ConversationStore.saveMessages(context, messages)
 
         if (messages.isEmpty()) return@LaunchedEffect
@@ -432,6 +469,7 @@ fun ChatScreen() {
                 items(messages, key = { it.id }) { message ->
                     MessageBubble(
                         message = message,
+                        onRetry = { failedMessage -> sendMessage(failedMessage.text, failedMessage.id) },
                         onProductClick = { product ->
                             if (!hideKeyboardIfInputFocused()) {
                                 selectedProductId = product.productId
@@ -1030,6 +1068,14 @@ private fun friendlyErrorMessage(error: ChatApiError, currentText: String): Stri
 
     // 普通用户先看到自然语言；错误码保留给开发调试，便于区分网络、检索、模型和服务内部异常。
     return "$prefix\n\n$debugLine"
+}
+
+private fun isFailureAssistantMessage(message: ChatMessage): Boolean {
+    // 失败重试时不把上一轮错误提示带回后端。它只是客户端状态说明，不是用户需求或商品事实。
+    return message.role == MessageRole.Assistant &&
+        message.products.isEmpty() &&
+        message.comparison == null &&
+        message.text.contains("错误码")
 }
 
 private fun isNearConversationBottom(listState: LazyListState): Boolean {

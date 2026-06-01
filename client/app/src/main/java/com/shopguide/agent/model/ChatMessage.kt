@@ -10,5 +10,7 @@ data class ChatMessage(
     val role: MessageRole,
     val text: String,
     val products: List<ProductCard> = emptyList(),
-    val comparison: ComparisonCard? = null
+    val comparison: ComparisonCard? = null,
+    val fallbackNotice: String = "",
+    val sendFailed: Boolean = false
 )
