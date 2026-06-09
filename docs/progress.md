@@ -25,7 +25,7 @@ Android 原生 App
 - **RAG 检索链路**：支持本地向量检索和 Qdrant 向量数据库。
 - **Embedding**：支持本地哈希向量和 Ark embedding；Qdrant collection 建议按 embedding 方案区分。
 - **模型接入与降级**：支持 DeepSeek 和 Doubao/Ark 聊天模型；无 Key 或模型生成失败时，可用本地确定性回答兜底，并通过 `fallback` meta 提示客户端。
-- **LLM Plan + Validator**：LLM 负责语义解析，后端校验意图、范围、序号、预算和排除词，避免模型越界。
+- **LLM Plan + Validator**：LLM 负责语义解析和边界规划，后端校验意图、范围、序号、预算、排除词和边界 fallback，避免模型越界。
 - **SSE 流式接口**：`/api/chat` 返回 `token`、`meta`、`comparison`、`products`、`done`、`error`。
 - **多轮记忆**：按 `deviceId + conversationId` 管理结构化会话状态，支持多需求隔离、旧需求恢复、序号指代和对比后追问。
 - **会话持久化**：默认写入本地 SQLite，后端重启后可恢复会话；客户端 `history` 作为兜底。
@@ -59,6 +59,7 @@ Android 原生 App
 - **匿名设备身份**：客户端生成 `deviceId`，用于后端会话隔离和持久化。
 - **结构化对比卡**：客户端渲染后端 `comparison` 事件。
 - **自动滚动优化**：用户在底部时自动滚动；用户翻历史时不强行抢滚动。
+- **虚拟列表滚动**：聊天消息使用 Compose `LazyColumn`，商品卡片使用 `LazyRow`，并通过稳定 key / contentType 优化长对话下的列表复用和滚动性能。
 
 ### 未做或暂不做
 
@@ -72,7 +73,7 @@ Android 原生 App
 当前后端测试覆盖：
 
 - `answer.test.js`：回答边界、Prompt、防幻觉、对比卡字段。
-- `intent.test.js`：LLM Plan 归一化、Validator 约束、指代/比较意图。
+- `intent.test.js`：LLM Plan 归一化、Validator 约束、指代/比较意图、边界规划与兜底。
 - `memory-eval.test.js`：多轮记忆、预算继承、跨需求恢复、对比后追问、数字指代。
 - `retrieval-quality.test.js`：检索质量基线。
 - `performance.test.js`：热门查询缓存和首 token 指标。
@@ -107,7 +108,7 @@ npm run test:smoke
 - 首 token 可观测指标：已完成，`meta` SSE 和 `/api/performance` 可查看。
 - 模型不可用自动降级：已完成，LLM 失败时后端退回本地规则回答，客户端展示轻提示，主推荐链路不中断。
 - 边界体验：已补充图片失败占位、缺少候选上下文提示、明显非购物问题拒答、多品类混合输入澄清、500 字输入上限和发送失败重试。
-- 端侧体验打磨：已完成商品卡片、详情页、多会话、自动滚动和对比卡；骨架屏未保留，因为实际体验割裂。
+- 端侧体验打磨：已完成商品卡片、详情页、多会话、自动滚动、虚拟列表滚动和对比卡；骨架屏未保留，因为实际体验割裂。
 
 ## 6. 交付风险与注意事项
 

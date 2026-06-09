@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.input.pointer.pointerInput
 import com.shopguide.agent.model.ChatMessage
 import com.shopguide.agent.model.MessageRole
+import com.shopguide.agent.model.ProductCard
 import com.shopguide.agent.model.ProductDetail
 import com.shopguide.agent.network.ChatApiError
 import com.shopguide.agent.network.ChatApi
@@ -80,6 +81,10 @@ import kotlinx.coroutines.withContext
 private const val LOADING_TEXT = "正在检索商品并生成回答..."
 private const val MAX_HISTORY_MESSAGES_FOR_REQUEST = 8
 private const val MAX_MESSAGE_CHARS = 500
+private const val CHAT_BOTTOM_ANCHOR_KEY = "conversation-bottom-anchor"
+private const val CHAT_CONTENT_TYPE_USER = "chat-user-message"
+private const val CHAT_CONTENT_TYPE_ASSISTANT = "chat-assistant-message"
+private const val CHAT_CONTENT_TYPE_BOTTOM_ANCHOR = "chat-bottom-anchor"
 
 @Composable
 fun ChatScreen() {
@@ -455,33 +460,21 @@ fun ChatScreen() {
                 onOpenMenu = { scope.launch { drawerState.open() } }
             )
 
-            LazyColumn(
-                state = listState,
+            ChatVirtualMessageList(
+                messages = messages,
+                listState = listState,
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    // 键盘打开时，点聊天区域先收键盘，不触发下面的卡片跳转等二级动作。
-                    .pointerInput(isInputFocused) {
-                        detectTapGestures(onTap = { hideKeyboardIfInputFocused() })
+                    .fillMaxWidth(),
+                isInputFocused = isInputFocused,
+                onBackgroundTap = { hideKeyboardIfInputFocused() },
+                onRetry = { failedMessage -> sendMessage(failedMessage.text, failedMessage.id) },
+                onProductClick = { product ->
+                    if (!hideKeyboardIfInputFocused()) {
+                        selectedProductId = product.productId
                     }
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(messages, key = { it.id }) { message ->
-                    MessageBubble(
-                        message = message,
-                        onRetry = { failedMessage -> sendMessage(failedMessage.text, failedMessage.id) },
-                        onProductClick = { product ->
-                            if (!hideKeyboardIfInputFocused()) {
-                                selectedProductId = product.productId
-                            }
-                        }
-                    )
                 }
-                item(key = "conversation-bottom-anchor") {
-                    Spacer(modifier = Modifier.height(1.dp))
-                }
-            }
+            )
 
             QuickPromptRow(
                 enabled = !isStreaming,
@@ -552,7 +545,7 @@ private fun welcomeMessage(): ChatMessage {
     return ChatMessage(
         id = 1,
         role = MessageRole.Assistant,
-        text = "你好，我是你的电商导购助手。可以直接告诉我预算、品类、使用场景和偏好，我会只基于商品库给你推荐，并说明为什么适合。"
+        text = "你好，我是 AI 导购。请告诉我品类、预算和使用场景，我会基于商品库推荐并说明依据。"
     )
 }
 
@@ -1095,6 +1088,60 @@ private fun isNearConversationBottom(listState: LazyListState): Boolean {
     // 只有真正接近底部时才继续跟随。长 AI 回复中途可见不等于已经到底部，
     // 这里保留少量像素容差，是为了覆盖卡片插入或文本换行导致的轻微高度变化。
     return lastVisibleIndex == bottomAnchorIndex - 1 && distanceToBottom <= 160
+}
+
+@Composable
+private fun ChatVirtualMessageList(
+    messages: List<ChatMessage>,
+    listState: LazyListState,
+    modifier: Modifier = Modifier,
+    isInputFocused: Boolean,
+    onBackgroundTap: () -> Unit,
+    onRetry: (ChatMessage) -> Unit,
+    onProductClick: (ProductCard) -> Unit
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .pointerInput(isInputFocused) {
+                // 聊天区域只负责收键盘，列表项点击仍交给 MessageBubble/ProductCard 处理。
+                // 把手势挂在虚拟列表容器上，避免每条消息都重复创建相同的背景点击监听。
+                detectTapGestures(onTap = { onBackgroundTap() })
+            }
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(
+            items = messages,
+            key = { message -> message.id },
+            contentType = { message -> chatMessageContentType(message) }
+        ) { message ->
+            MessageBubble(
+                message = message,
+                onRetry = onRetry,
+                onProductClick = onProductClick
+            )
+        }
+
+        item(
+            key = CHAT_BOTTOM_ANCHOR_KEY,
+            contentType = CHAT_CONTENT_TYPE_BOTTOM_ANCHOR
+        ) {
+            // 底部锚点是一个独立轻量 item。自动滚动总是滚到它，而不是滚到最后一条消息，
+            // 这样最后一条助手消息很长或刚插入商品卡片时，也能保证真正的对话底部进入视口。
+            Spacer(modifier = Modifier.height(1.dp))
+        }
+    }
+}
+
+private fun chatMessageContentType(message: ChatMessage): String {
+    // contentType 告诉 LazyColumn 哪些 item 结构相近，便于虚拟列表复用测量和组合结果。
+    // 用户消息和助手消息布局差异明显，分开声明可以减少长对话滚动时不必要的重组成本。
+    return if (message.role == MessageRole.User) {
+        CHAT_CONTENT_TYPE_USER
+    } else {
+        CHAT_CONTENT_TYPE_ASSISTANT
+    }
 }
 
 private fun updateAssistantMessage(

@@ -30,7 +30,8 @@ import {
   TURN_INTENTS,
   updateSessionState
 } from "./services/memory.js";
-import { retrieveProductsWithDebug, retrieveProductsWithState } from "./services/retriever.js";
+import { retrieveProductsWithDebug } from "./services/retriever.js";
+import { buildBoundaryReviewTrace, buildReviewTrace } from "./services/reviewTrace.js";
 
 const DEFAULT_CHAT_PRODUCT_LIMIT = 4;
 const MAX_CHAT_PRODUCT_LIMIT = 8;
@@ -144,6 +145,31 @@ function findProduct(products, productId) {
   return products.find((item) => item.productId === productId);
 }
 
+function applyFinalProductBoundaries(products, state = {}) {
+  // retriever 是主要过滤层，但对比/指代类请求可能直接复用历史候选，不一定重新进入全库检索。
+  // 因此在生成回答和商品卡片前再做一次轻量边界校验，确保当前会话里的预算上下限不会被旧候选绕过。
+  return products.filter((product) => {
+    if (Number.isFinite(state.maxPrice) && product.basePrice > state.maxPrice) return false;
+    if (Number.isFinite(state.minPrice) && product.basePrice < state.minPrice) return false;
+    return true;
+  });
+}
+
+function alignRetrievalDebugToAnswerProducts(debug = {}, answerProducts = []) {
+  const answerIds = new Set(answerProducts.map((product) => product.productId));
+
+  return {
+    ...debug,
+    products: answerProducts,
+    counts: {
+      ...(debug.counts || {}),
+      finalProducts: answerProducts.length,
+      returned: answerProducts.length
+    },
+    finalSelection: (debug.finalSelection || []).filter((item) => answerIds.has(item.productId))
+  };
+}
+
 function sendImageFile(res, filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
     sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品图片不存在"));
@@ -206,6 +232,16 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       const state = updateSessionState(session, message, ruleIntent.parsed);
       const answerProducts = cached.products.slice(0, productLimit);
       const cards = buildProductCards(answerProducts);
+      const review = buildReviewTrace({
+        message,
+        turnIntent: ruleIntent,
+        retrievalScope: "hot_query_cache",
+        state,
+        products: answerProducts,
+        totalProducts: products.length,
+        cacheHit: true,
+        note: "hot query cache reused a previous answer/products pair; cached productIds are restored from the current catalog before returning"
+      });
 
       writeSse(res, "meta", {
         type: "cache",
@@ -220,6 +256,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       rememberProducts(session, answerProducts, { updateReference: true });
       persistSession(session);
 
+      writeSse(res, "review", { review });
       writeSse(res, "products", { products: cards });
       writeSse(res, "done", { ok: true, conversationId, deviceId, cacheHit: true });
       return;
@@ -237,12 +274,20 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const turnIntent = await parseTurnIntent(config, session, message);
     if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
       const answerText = buildMultiNeedAnswer();
+      const review = buildBoundaryReviewTrace({
+        message,
+        turnIntent,
+        retrievalScope: "multi_need",
+        totalProducts: products.length,
+        note: "multi-need input is clarified before retrieval so unrelated product categories are not mixed into one card set"
+      });
 
       // 当前客户端一轮只展示一组候选卡片；多品类混合输入先澄清，避免把两套检索结果揉成一组不可信推荐。
       await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
       appendTurn(session, "user", message);
       appendTurn(session, "assistant", answerText);
       persistSession(session);
+      writeSse(res, "review", { review });
       writeSse(res, "products", { products: [] });
       writeSse(res, "done", {
         ok: true,
@@ -254,12 +299,20 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     }
     if (turnIntent.type === TURN_INTENTS.OUT_OF_SCOPE) {
       const answerText = buildOutOfScopeAnswer(message);
+      const review = buildBoundaryReviewTrace({
+        message,
+        turnIntent,
+        retrievalScope: "out_of_scope",
+        totalProducts: products.length,
+        note: "out-of-scope input is blocked before retrieval so non-shopping questions do not pollute product memory"
+      });
 
       // 明显非购物请求不更新导购需求，也不触发检索，避免把“天气/论文/代码”等内容写进商品记忆。
       await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
       appendTurn(session, "user", message);
       appendTurn(session, "assistant", answerText);
       persistSession(session);
+      writeSse(res, "review", { review });
       writeSse(res, "products", { products: [] });
       writeSse(res, "done", {
         ok: true,
@@ -273,6 +326,13 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       const answerText = buildMissingContextAnswer(message);
       const state = updateSessionState(session, message, turnIntent.parsed);
       void state;
+      const review = buildBoundaryReviewTrace({
+        message,
+        turnIntent,
+        retrievalScope: "missing_context",
+        totalProducts: products.length,
+        note: "reference/compare request has no usable candidate context, so full-catalog retrieval is intentionally skipped"
+      });
 
       // 缺少候选上下文时直接解释边界，不进入全库检索。这样“第二款怎么样”不会被误当成新搜索，
       // 也不会产生与用户代词无关的商品卡片。
@@ -280,6 +340,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       appendTurn(session, "user", message);
       appendTurn(session, "assistant", answerText);
       persistSession(session);
+      writeSse(res, "review", { review });
       writeSse(res, "products", { products: [] });
       writeSse(res, "done", {
         ok: true,
@@ -315,6 +376,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
 
     // RAG 第一步：从可信商品库检索候选商品。聊天回答和商品卡片必须使用同一组候选，
     // 否则会出现“模型讲了 3 个商品，但客户端展示 4 张卡片”的体验不一致。
+    let retrievalDebug = null;
     let matchedProducts;
     try {
       // turnIntent 决定检索范围：refine/new_search 面向全库，refer 只围绕上一轮候选或指定序号商品。
@@ -325,8 +387,31 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
         // 对比问题的可信边界是“上一轮候选/用户点名的序号商品”，不是全库重新召回。
         // 这里直接使用结构化记忆里的候选，避免向量排序把未被点名的商品插进对比答案和卡片。
         matchedProducts = retrievalProducts.slice(0, productLimit);
+        retrievalDebug = {
+          products: matchedProducts,
+          counts: {
+            totalProducts: products.length,
+            filteredCandidates: retrievalProducts.length,
+            returned: matchedProducts.length,
+            finalProducts: matchedProducts.length
+          },
+          parsed: parsedRetrievalInput(turnIntent),
+          usedVectorStore: false,
+          finalSelection: matchedProducts.map((product) => ({
+            productId: product.productId,
+            title: product.title,
+            brand: product.brand,
+            price: product.basePrice,
+            category: product.category,
+            subCategory: product.subCategory,
+            score: null,
+            rankScore: null,
+            preferenceHits: [],
+            reason: "对比问题只使用用户点名或最近对比范围内的候选，不重新从全库召回"
+          }))
+        };
       } else {
-        matchedProducts = await retrieveProductsWithState(
+        retrievalDebug = await retrieveProductsWithDebug(
           retrievalProducts,
           retrievalQuery,
           state,
@@ -334,6 +419,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
           vectorIndex,
           parsedRetrievalInput(turnIntent)
         );
+        matchedProducts = retrievalDebug.products;
       }
     } catch (error) {
       // 检索层异常单独标成 RETRIEVAL_ERROR，方便区分 Qdrant/Embedding/索引问题和模型生成问题。
@@ -344,9 +430,26 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     }
     const answerMode =
       turnIntent.type === TURN_INTENTS.COMPARE ? "compare" : turnIntent.type === TURN_INTENTS.REFER ? "refer" : "";
-    const answerProducts = matchedProducts.slice(0, productLimit);
+    const answerProducts = applyFinalProductBoundaries(matchedProducts, state).slice(0, productLimit);
+    const answerDebug = alignRetrievalDebugToAnswerProducts(retrievalDebug, answerProducts);
     const cards = buildProductCards(answerProducts);
     const finalAnswerState = { ...answerState, answerMode };
+    const review = buildReviewTrace({
+      message,
+      turnIntent,
+      retrievalScope:
+        turnIntent.type === TURN_INTENTS.COMPARE
+          ? "comparison_candidates"
+          : turnIntent.type === TURN_INTENTS.REFER
+            ? "last_products"
+            : "full_catalog",
+      retrievalQuery,
+      state,
+      debug: answerDebug,
+      products: answerProducts,
+      totalProducts: products.length,
+      note: "review event explains the same candidate set used by token text, products cards and comparison payload"
+    });
 
     let answerText = "";
     let fallbackUsed = false;
@@ -355,7 +458,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
-        for await (const token of streamModelAnswer(config, message, answerProducts, history, answerState)) {
+        for await (const token of streamModelAnswer(config, message, answerProducts, history, finalAnswerState)) {
           answerText += token;
           markFirstToken({ cacheHit: false });
           writeSse(res, "token", { content: token });
@@ -413,6 +516,8 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       writeSse(res, "comparison", { comparison });
     }
 
+    // review 是“评审模式”的结构化证据链：它不影响普通聊天展示，客户端可在调试开关打开时用它解释本轮推荐依据。
+    writeSse(res, "review", { review });
     // 文本流结束后再发送结构化商品卡片，客户端据此渲染可点击商品列表。
     writeSse(res, "products", { products: cards });
     writeSse(res, "done", {
@@ -528,6 +633,13 @@ function installRoutes(app, { config, products, vectorIndex }) {
       const session = includeMemory ? getSession(conversationId, deviceId) : resetSession(`debug:${conversationId}:${Date.now()}`, deviceId);
       const turnIntent = await parseTurnIntent(config, session, message);
       if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
+        const review = buildBoundaryReviewTrace({
+          message,
+          turnIntent,
+          retrievalScope: "multi_need",
+          totalProducts: products.length,
+          note: "multi-need intent asks the user to split product categories before retrieval"
+        });
         return sendJson(res, 200, {
           ok: true,
           deviceId,
@@ -538,6 +650,7 @@ function installRoutes(app, { config, products, vectorIndex }) {
           session: snapshotSession(session),
           originalMessage: message,
           retrievalQuery: "",
+          review,
           retrieval: {
             products: [],
             counts: {
@@ -552,6 +665,13 @@ function installRoutes(app, { config, products, vectorIndex }) {
         });
       }
       if (turnIntent.type === TURN_INTENTS.OUT_OF_SCOPE) {
+        const review = buildBoundaryReviewTrace({
+          message,
+          turnIntent,
+          retrievalScope: "out_of_scope",
+          totalProducts: products.length,
+          note: "out of scope intent does not run retrieval"
+        });
         return sendJson(res, 200, {
           ok: true,
           deviceId,
@@ -562,6 +682,7 @@ function installRoutes(app, { config, products, vectorIndex }) {
           session: snapshotSession(session),
           originalMessage: message,
           retrievalQuery: "",
+          review,
           retrieval: {
             products: [],
             counts: {
@@ -576,6 +697,13 @@ function installRoutes(app, { config, products, vectorIndex }) {
         });
       }
       if (turnIntent.type === TURN_INTENTS.MISSING_CONTEXT) {
+        const review = buildBoundaryReviewTrace({
+          message,
+          turnIntent,
+          retrievalScope: "missing_context",
+          totalProducts: products.length,
+          note: "missing context intent does not run retrieval"
+        });
         return sendJson(res, 200, {
           ok: true,
           deviceId,
@@ -586,6 +714,7 @@ function installRoutes(app, { config, products, vectorIndex }) {
           session: snapshotSession(session),
           originalMessage: message,
           retrievalQuery: "",
+          review,
           retrieval: {
             products: [],
             counts: {
@@ -629,6 +758,18 @@ function installRoutes(app, { config, products, vectorIndex }) {
               },
               parsed: parsedRetrievalInput(turnIntent),
               usedVectorStore: false,
+              finalSelection: retrievalProducts.slice(0, debugLimit).map((product) => ({
+                productId: product.productId,
+                title: product.title,
+                brand: product.brand,
+                price: product.basePrice,
+                category: product.category,
+                subCategory: product.subCategory,
+                score: null,
+                rankScore: null,
+                preferenceHits: [],
+                reason: "对比问题只使用用户点名或最近对比范围内的候选，不重新从全库召回"
+              })),
               note: "compare intent reuses referenced candidates instead of full-catalog retrieval"
             }
           : await retrieveProductsWithDebug(
@@ -639,6 +780,23 @@ function installRoutes(app, { config, products, vectorIndex }) {
               vectorIndex,
               parsedRetrievalInput(turnIntent)
             );
+      const retrievalScope =
+        turnIntent.type === TURN_INTENTS.COMPARE
+          ? "comparison_candidates"
+          : turnIntent.type === TURN_INTENTS.REFER
+            ? "last_products"
+            : "full_catalog";
+      const review = buildReviewTrace({
+        message,
+        turnIntent,
+        retrievalScope,
+        retrievalQuery,
+        state,
+        debug,
+        products: debug.products,
+        totalProducts: products.length,
+        note: "debug review explains intent parsing, hard filters, candidate counts, ranking evidence and anti-hallucination boundary"
+      });
 
       return sendJson(res, 200, {
         ok: true,
@@ -646,15 +804,11 @@ function installRoutes(app, { config, products, vectorIndex }) {
         conversationId,
         includeMemory,
         turnIntent,
-        retrievalScope:
-          turnIntent.type === TURN_INTENTS.COMPARE
-            ? "comparison_candidates"
-            : turnIntent.type === TURN_INTENTS.REFER
-              ? "last_products"
-              : "full_catalog",
+        retrievalScope,
         session: snapshotSession(session),
         originalMessage: message,
         retrievalQuery,
+        review,
         retrieval: {
           ...debug,
           products: buildProductCards(debug.products)

@@ -21,6 +21,23 @@ async function run() {
   assert(pricierIntent.source === "rules", "price direction fallback should stay rule-based without key");
   assert(pricierIntent.type === TURN_INTENTS.REFINE, "太便宜了 should continue the current conversation");
 
+  const explicitBudgetSession = resetSession("intent-explicit-budget-priority");
+  explicitBudgetSession.lastProducts = [
+    { productId: "a", title: "170元防晒", category: "美妆护肤", subCategory: "防晒", basePrice: 170 },
+    { productId: "b", title: "268元防晒", category: "美妆护肤", subCategory: "防晒", basePrice: 268 },
+    { productId: "c", title: "298元防晒", category: "美妆护肤", subCategory: "防晒", basePrice: 298 }
+  ];
+  updateSessionState(explicitBudgetSession, "不要超过200", {
+    price: { maxPrice: 200 },
+    priceDirection: "lower",
+    negativeTerms: [],
+    preferences: []
+  });
+  assert(
+    explicitBudgetSession.state.maxPrice === 200,
+    "explicit numeric budget should not be overwritten by LLM priceDirection=lower"
+  );
+
   const compareIntent = await parseTurnIntent(config, getSession("intent-test"), "第二款和第三款对比一下");
   assert(compareIntent.source === "rules", "compare fallback should stay rule-based without key");
   assert(compareIntent.type === TURN_INTENTS.COMPARE, "comparison question should use compare intent");
@@ -131,6 +148,31 @@ async function run() {
           {
             message: {
               content: JSON.stringify({
+                turn_type: "compare",
+                scope: "last_compared_products",
+                preferences: ["清爽"],
+                reason: "模型误以为用户仍在比较上一轮防晒候选"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const newSearchGuardSession = resetSession("intent-new-search-guard-test");
+    updateSessionState(newSearchGuardSession, "推荐一款适合油皮的防晒霜");
+    const guardedNewSearchIntent = await parseTurnIntent(mockConfig, newSearchGuardSession, "想买一台办公轻薄笔记本");
+    assert(guardedNewSearchIntent.type === TURN_INTENTS.NEW_SEARCH, "rule-confirmed new search should not be downgraded by LLM context");
+    assert(guardedNewSearchIntent.plan.scope === "full_catalog", "new search should reset retrieval scope to full catalog");
+    assert(guardedNewSearchIntent.parsed.itemIntent?.itemType === "笔记本", "new search should keep the notebook item boundary");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
                 turn_type: "new_search",
                 scope: "full_catalog",
                 category: "数码电子",
@@ -146,6 +188,71 @@ async function run() {
     assert(referPlanIntent.plan.scope === "referenced_products", "refer plan should stay inside referenced products");
     assert(!referPlanIntent.parsed.category, "refer validator should ignore hallucinated category from LLM plan");
     assert(!referPlanIntent.parsed.itemIntent, "refer validator should ignore hallucinated item type from LLM plan");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "out_of_scope",
+                is_shopping_guidance: false,
+                boundary_reason: "用户要点外卖，这是外卖/订餐服务，不是当前商品库导购"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const llmBoundaryIntent = await parseTurnIntent(mockConfig, resetSession("intent-llm-boundary-test"), "给我点外卖");
+    assert(llmBoundaryIntent.source === "llm", "boundary cases should go through LLM planner when a key exists");
+    assert(llmBoundaryIntent.type === TURN_INTENTS.OUT_OF_SCOPE, "LLM should be allowed to plan out_of_scope");
+    assert(llmBoundaryIntent.plan.isShoppingGuidance === false, "out_of_scope plan should mark non-shopping guidance");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "new_search",
+                scope: "full_catalog",
+                category: "食品饮料",
+                item_type: "饮料"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const guardedBoundaryIntent = await parseTurnIntent(mockConfig, resetSession("intent-boundary-validator-test"), "给我点外卖");
+    assert(guardedBoundaryIntent.type === TURN_INTENTS.OUT_OF_SCOPE, "validator should recover when LLM misplans food delivery as product search");
+    assert(guardedBoundaryIntent.plan.validator.boundaryFallbackApplied === true, "boundary validator should expose fallback application");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "multi_need",
+                needs_clarification: true,
+                clarification_reason: "用户同时提出笔记本和防晒霜两个品类"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const llmMultiNeedIntent = await parseTurnIntent(mockConfig, resetSession("intent-llm-multi-need-test"), "想买笔记本和防晒霜");
+    assert(llmMultiNeedIntent.type === TURN_INTENTS.MULTI_NEED, "LLM should be allowed to plan multi_need");
+    assert(llmMultiNeedIntent.plan.needsClarification === true, "multi_need should request clarification");
   } finally {
     globalThis.fetch = originalFetch;
   }

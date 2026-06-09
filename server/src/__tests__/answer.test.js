@@ -78,6 +78,17 @@ function run() {
   );
 
   const sunscreenPair = products.filter((product) => product.productId === "p_beauty_023" || product.productId === "p_beauty_010");
+  const sunscreenComparison = buildComparisonPayload("哪个更清爽", sunscreenPair, {
+    answerMode: "compare",
+    preferences: ["油皮", "控油", "清爽"]
+  });
+  const sunscreenTradeoff = sunscreenComparison.rows.find((row) => row.label === "取舍点");
+  const sunscreenScenario = sunscreenComparison.rows.find((row) => row.label === "适合场景");
+  assert(
+    sunscreenTradeoff.values.every((item, index) => item.value !== sunscreenScenario.values[index].value),
+    "skincare comparison tradeoffs and scenarios should not duplicate the same values"
+  );
+
   const priceSafeDecision = buildLocalAnswer("比较2和3", sunscreenPair, [], {
     answerMode: "compare",
     preferences: ["油皮", "控油", "清爽"]

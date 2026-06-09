@@ -388,7 +388,7 @@ function looksLikeCandidateMetaQuestion(message) {
 
 function looksLikeOutOfScope(message) {
   // 只拦截明显非购物任务，避免误伤“送礼物/夏天用/上班通勤”这类没有明确品类但仍可能是导购需求的表达。
-  return /(天气|气温|下雨|新闻|股票|写论文|论文|作业|翻译|写代码|编程|代码报错|讲个笑话|讲故事|考试题|数学题|简历|旅游攻略)/.test(
+  return /(天气|气温|下雨|新闻|股票|写论文|论文|作业|翻译|写代码|编程|代码报错|讲个笑话|讲故事|考试题|数学题|简历|旅游攻略|外卖|点餐|订餐|叫餐|送餐)/.test(
     message
   );
 }
@@ -437,6 +437,30 @@ export function classifyTurnIntent(session, message) {
     return { type: TURN_INTENTS.MISSING_CONTEXT, parsed, reason: "用户在没有当前候选时发起了指代或对比追问" };
   }
 
+  if (hasContext && hasExplicitProductReference(message) && looksLikeComparison(message, parsed)) {
+    // “刚才笔记本第二款和第三款对比”同时包含旧商品类型和显式序号。
+    // 这里应恢复旧 need 的候选做对比，而不是因为提到“笔记本”就开启一轮全库新搜索。
+    return { type: TURN_INTENTS.COMPARE, parsed, reason: "用户明确指向历史候选并要求对比" };
+  }
+
+  if (hasContext && hasExplicitProductReference(message) && (looksLikeReference(message) || looksLikeCandidateMetaQuestion(message))) {
+    // 显式指代词是比新品类词更强的“回看历史候选”信号，例如“刚才笔记本第三款呢”。
+    // 它和“想买一台办公轻薄笔记本”不同：前者要恢复旧候选，后者才要创建新的 active need。
+    return { type: TURN_INTENTS.REFER, parsed, reason: "用户明确提到了历史候选或候选序号" };
+  }
+
+  if (
+    hasNewSearchSignal &&
+    (!hasContext ||
+      isDifferentCategory(session.state.category, parsed.category) ||
+      isDifferentItemIntent(session.state.itemIntent, parsed.itemIntent))
+  ) {
+    // 明确出现新品类/新商品类型时，先切换到新的 active need，再处理“轻薄、清爽、更适合”等偏好词。
+    // 这些词既可能是上一组候选的对比维度，也可能是新需求的普通偏好；商品类型是更强的边界信号，
+    // 所以要优先隔离，避免“防晒霜里哪个更清爽”污染后续“办公轻薄笔记本”的检索和回答。
+    return { type: TURN_INTENTS.NEW_SEARCH, parsed, reason: "用户提出了新的商品类目或商品类型" };
+  }
+
   if (hasContext && looksLikeComparison(message, parsed)) {
     return { type: TURN_INTENTS.COMPARE, parsed, reason: "用户想比较当前候选商品的差异和适用场景" };
   }
@@ -445,11 +469,7 @@ export function classifyTurnIntent(session, message) {
     return { type: TURN_INTENTS.REFER, parsed, reason: "用户提到了上一轮商品或候选序号" };
   }
 
-  if (
-    !hasContext ||
-    isDifferentCategory(session.state.category, parsed.category) ||
-    isDifferentItemIntent(session.state.itemIntent, parsed.itemIntent)
-  ) {
+  if (!hasContext) {
     return { type: TURN_INTENTS.NEW_SEARCH, parsed, reason: "用户提出了新的商品类目或商品类型" };
   }
 
@@ -521,12 +541,15 @@ export function updateSessionState(session, message, parsedOverride = null) {
   const category = parsedOverride?.category || inferCategory(message);
   const itemIntent = parsedOverride?.itemIntent || inferItemIntent(message);
   const price = parsedOverride?.price || extractPriceConstraint(message);
-  const cheaperBudget =
-    parsedOverride?.priceDirection === "lower"
+  const hasExplicitPriceBoundary = Number.isFinite(price.maxPrice) || Number.isFinite(price.minPrice);
+  const cheaperBudget = hasExplicitPriceBoundary
+    ? null
+    : parsedOverride?.priceDirection === "lower"
       ? resolveCheaperBudget(session, "便宜点")
       : resolveCheaperBudget(session, message);
-  const pricierBudget =
-    parsedOverride?.priceDirection === "higher"
+  const pricierBudget = hasExplicitPriceBoundary
+    ? null
+    : parsedOverride?.priceDirection === "higher"
       ? resolvePricierBudget(session, "太便宜了")
       : resolvePricierBudget(session, message);
   const excludeTerms = parsedOverride?.negativeTerms || extractNegativeTerms(message);
@@ -538,6 +561,8 @@ export function updateSessionState(session, message, parsedOverride = null) {
   if (Number.isFinite(price.maxPrice)) session.state.maxPrice = price.maxPrice;
   if (Number.isFinite(price.minPrice)) session.state.minPrice = price.minPrice;
   if (Number.isFinite(cheaperBudget)) {
+    // “便宜点/太便宜了”这类相对价格才根据上一轮候选推导预算；
+    // 如果本轮已经说了“不要超过200/1万预算”，明确数字必须优先，不能被 LLM 的 priceDirection 覆盖。
     session.state.maxPrice = Math.max(0, cheaperBudget);
     session.state.minPrice = null;
   }

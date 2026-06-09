@@ -85,12 +85,49 @@ function compactFeatureText(product) {
 }
 
 function comparisonTradeoffText(product) {
+  const title = `${product.title} ${product.brand}`;
+  if (isCategory(product, "美妆护肤")) {
+    if (/(安热沙|防水防汗|户外|身体)/.test(title)) {
+      return "户外防水防汗更强；价格最高";
+    }
+    if (/(理肤泉|易敏肌|敏感肌|特护)/.test(title)) {
+      return "偏敏感肌和控油；价格偏高";
+    }
+    if (/(欧莱雅|水感|隔离|提亮)/.test(title)) {
+      return "预算更友好，兼顾提亮；户外防护弱一些";
+    }
+  }
+
   const tags = productFeatureTags(product);
-  if (tags.length > 0) return tags.slice(0, 3).join("、");
-  return compactFeatureText(product);
+  const highlights = tags.length > 0 ? tags.slice(0, 2).join("、") : compactFeatureText(product);
+  const priceText =
+    product.basePrice >= 1000
+      ? "预算占用高"
+      : product.basePrice >= 200
+        ? "价格偏高"
+        : product.basePrice <= 80
+          ? "入手门槛低"
+          : "价格适中";
+
+  // 取舍点强调“为什么选/为什么犹豫”，不能和适合场景复用同一套标签。
+  // 对比卡需要帮助用户决策：这里把商品主打点和价格取舍放在一起，场景行再单独说明适用人群。
+  return `主打${highlights}；${priceText}`;
 }
 
 function comparisonScenarioText(product) {
+  const title = `${product.title} ${product.brand}`;
+  if (isCategory(product, "美妆护肤")) {
+    if (/(安热沙|防水防汗|户外|身体)/.test(title)) {
+      return "户外运动、出汗场景";
+    }
+    if (/(理肤泉|易敏肌|敏感肌|特护)/.test(title)) {
+      return "油皮/敏感肌日常通勤";
+    }
+    if (/(欧莱雅|水感|隔离|提亮)/.test(title)) {
+      return "日常通勤、妆前打底";
+    }
+  }
+
   const evidence = productEvidenceText(product);
   const scenarioRules = isCategory(product, "食品饮料")
     ? [

@@ -119,6 +119,10 @@ async function run() {
         assert(debug.turnIntent.type === "out_of_scope", "debug intent should expose out_of_scope");
         assert(debug.retrievalScope === "out_of_scope", "debug retrieval scope should explain why retrieval is skipped");
 
+        const delivery = await chat(baseUrl, conversationId, "给我点外卖");
+        assert(delivery.products.length === 0, "food-delivery service request should not return unrelated product cards");
+        assert(delivery.tokenText.includes("商品导购"), "food-delivery answer should explain the shopping-assistant boundary");
+
         await chat(baseUrl, conversationId, "推荐一款防晒霜");
         const contextualDebug = await debugRetrieve(baseUrl, conversationId, "天气怎么样");
         assert(contextualDebug.turnIntent.type === "out_of_scope", "out-of-scope should not be swallowed by existing product context");
@@ -371,6 +375,32 @@ async function run() {
           assert(decision.products[1].productId === compared.products[1].productId, `${message} should keep compared product 2`);
           assert(decision.comparison?.columns?.length === 2, `${message} should emit comparison component data`);
         }
+      })
+    );
+
+    results.push(
+      await runCase("新商品需求隔离：防晒清爽追问后切到笔记本预算不应混入旧偏好", async () => {
+        const conversationId = "memory-sunscreen-to-notebook-budget";
+        await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        const compared = await chat(baseUrl, conversationId, "哪个更清爽", 6);
+        assert(compared.products.length >= 2, "sunscreen comparison should have compared candidates");
+
+        const notebooks = await chat(baseUrl, conversationId, "想买一台办公轻薄笔记本", 6);
+        assert(notebooks.products.length > 0, "new notebook need should return products");
+        assert(notebooks.products.every((product) => product.category === "数码电子"), "new notebook need should switch category");
+        assert(notebooks.products.every((product) => product.subCategory === "笔记本电脑"), "new notebook need should switch item type");
+
+        const budget = await chat(baseUrl, conversationId, "预算1万", 6);
+        assert(budget.products.length > 0, "notebook budget follow-up should keep matching products");
+        assert(budget.products.every((product) => product.category === "数码电子"), "budget follow-up should not return skincare products");
+        assert(budget.products.every((product) => product.subCategory === "笔记本电脑"), "budget follow-up should remain notebook");
+        assert(budget.products.every((product) => Number(product.price) <= 10000), "budget follow-up should respect 10000 max price");
+        assert(!/防晒|油皮|清爽|控油|肤感/.test(budget.tokenText), "notebook answer should not mention stale sunscreen preferences");
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "这些里面怎么选", 6);
+        const activeNeed = debug.session.needs.find((need) => need.needId === debug.session.activeNeedId);
+        assert(activeNeed?.itemType === "笔记本", "active need should remain notebook after budget follow-up");
+        assert(activeNeed?.maxPrice === 10000, "active notebook need should remember maxPrice=10000");
       })
     );
 

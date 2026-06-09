@@ -88,7 +88,11 @@ fun MessageBubble(
                 // 商品卡片和文本分开渲染，卡片只来自后端结构化 products 事件。
                 // 横向滑动更适合移动端导购：不会把一轮回复拉得过长，也方便用户快速比较候选。
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(message.products, key = { it.productId }) { product ->
+                    items(
+                        items = message.products,
+                        key = { product -> product.productId },
+                        contentType = { "product-card" }
+                    ) { product ->
                         ProductCardView(
                             product = product,
                             onClick = onProductClick

@@ -185,6 +185,10 @@ SESSION_STORE_PATH=.data/shopguide_sessions.db
 ```json
 {
   "turn_type": "compare",
+  "is_shopping_guidance": true,
+  "boundary_reason": "",
+  "needs_clarification": false,
+  "clarification_reason": "",
   "scope": "last_compared_products",
   "target_refs": [2, 5],
   "focus": ["控油", "清爽"],
@@ -201,8 +205,9 @@ SESSION_STORE_PATH=.data/shopguide_sessions.db
 - `target_refs` 必须指向当前候选中真实存在的序号。
 - 预算、排除词只有在用户本轮明确提到价格或否定表达时才会变成硬约束。
 - `refer/compare` 场景下，LLM 不能凭空改写类目或商品类型，避免污染多轮上下文。
+- `out_of_scope / multi_need / missing_context` 也允许由 LLM 规划；如果 LLM 漏判，规则 fallback 会作为安全护栏把它拉回边界，避免进入检索并展示无关卡片。
 
-因此当前机制是：LLM 负责语义解析和任务规划，后端负责约束、校验和执行。
+因此当前机制是：LLM 负责语义解析和任务规划，后端负责约束、校验和执行；没有模型 Key 或模型解析失败时，规则解析会接管，保证 Demo 主链路仍可运行。
 
 ## 目录结构
 

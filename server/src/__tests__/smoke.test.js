@@ -88,8 +88,18 @@ async function run() {
 
     const first = await requestChat(baseUrl, "推荐一款防晒霜");
     assert(first.some((item) => item.event === "token"), "chat should emit token event");
+    assert(first.some((item) => item.event === "review"), "chat should emit review event for judge/debug mode");
     assert(first.some((item) => item.event === "products"), "chat should emit products event");
     assert(first.some((item) => item.event === "done"), "chat should emit done event");
+
+    const reviewEvent = first.find((item) => item.event === "review");
+    assert(reviewEvent.data.review.mode === "review", "review event should expose stable review mode");
+    assert(reviewEvent.data.review.retrieval.scope === "full_catalog", "new search review should explain full catalog retrieval");
+    assert(reviewEvent.data.review.evidence.length > 0, "review event should expose product evidence");
+    assert(
+      reviewEvent.data.review.safety.some((item) => item.includes("禁止编造")),
+      "review event should document anti-hallucination boundaries"
+    );
 
     const productEvent = first.find((item) => item.event === "products");
     assert(productEvent.data.products.every((product) => product.category === "美妆护肤"), "防晒霜查询不应返回非美妆类商品");
@@ -101,6 +111,12 @@ async function run() {
     assert(outOfScopeProducts.length === 0, "out-of-scope request should not return product cards");
     assert(outOfScopeDone.outOfScope === true, "out-of-scope request should expose done.outOfScope");
 
+    const delivery = await requestChat(baseUrl, "给我点外卖", "delivery-boundary-demo");
+    const deliveryProducts = delivery.find((item) => item.event === "products")?.data.products || [];
+    const deliveryDone = delivery.find((item) => item.event === "done")?.data;
+    assert(deliveryProducts.length === 0, "food-delivery service request should not return unrelated product cards");
+    assert(deliveryDone.outOfScope === true, "food-delivery service request should expose done.outOfScope");
+
     const multiNeed = await requestChat(baseUrl, "想买笔记本和防晒霜", "multi-need-boundary-demo");
     const multiNeedProducts = multiNeed.find((item) => item.event === "products")?.data.products || [];
     const multiNeedDone = multiNeed.find((item) => item.event === "done")?.data;
@@ -110,6 +126,21 @@ async function run() {
     const second = await requestChat(baseUrl, "再便宜点");
     const done = second.find((item) => item.event === "done");
     assert(done.data.conversationId === "smoke-demo", "done event should include conversationId");
+
+    await requestChat(baseUrl, "推荐一款适合油皮的防晒霜", "sunscreen-budget-demo");
+    const sunscreenBudget = await requestChat(baseUrl, "不要超过200", "sunscreen-budget-demo");
+    const sunscreenBudgetProducts = sunscreenBudget.find((item) => item.event === "products")?.data.products || [];
+    const sunscreenBudgetText = sunscreenBudget
+      .filter((item) => item.event === "token")
+      .map((item) => item.data?.content || "")
+      .join("");
+    assert(sunscreenBudgetProducts.length > 0, "sunscreen budget follow-up should keep matching products");
+    assert(
+      sunscreenBudgetProducts.every((product) => Number(product.price) <= 200),
+      "不要超过200 should not return over-budget sunscreen products"
+    );
+    assert(!sunscreenBudgetText.includes("268"), "不要超过200 answer text should not mention over-budget 268 yuan product");
+    assert(!sunscreenBudgetText.includes("理肤泉"), "不要超过200 answer text should not mention over-budget La Roche-Posay product");
 
     const referFirst = await requestChat(baseUrl, "推荐防晒霜", "refer-demo");
     const referFirstProducts = referFirst.find((item) => item.event === "products")?.data.products || [];
@@ -239,6 +270,10 @@ async function run() {
       includeMemory: false
     });
     assert(debug.ok === true, "debug retrieve should return ok");
+    assert(debug.review.mode === "review", "debug retrieve should return review trace");
+    assert(debug.review.filters.category === "美妆护肤", "debug review should expose parsed hard filters");
+    assert(debug.review.retrieval.filteredCandidates > 0, "debug review should expose retrieval counts");
+    assert(debug.review.evidence.length === debug.retrieval.products.length, "debug review evidence should align with returned product cards");
     assert(debug.retrieval.counts.filteredCandidates > 0, "debug retrieve should expose candidate count");
     assert(debug.retrieval.products.length > 0, "debug retrieve should return product cards");
 
