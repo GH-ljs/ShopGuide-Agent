@@ -103,7 +103,7 @@ export function buildHotQueryCacheKey({ turnIntent, state, message, limit }) {
   // key 使用“结构化语义 + 轻量归一化文本”，让“推荐防晒霜”和“帮我推荐防晒霜”
   // 这类表达能复用结果，同时预算、排除词、偏好不同的问题不会串缓存。
   return JSON.stringify({
-    version: 1,
+    version: 2,
     category,
     itemType: itemIntent?.itemType || "",
     maxPrice,

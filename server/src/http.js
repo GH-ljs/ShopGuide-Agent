@@ -11,6 +11,7 @@ import { parseTurnIntent } from "./services/intent.js";
 import { buildHotQueryCacheKey, createHotQueryCache } from "./services/hotCache.js";
 import {
   appendTurn,
+  buildActiveNeedMemorySummary,
   buildConversationMemorySummary,
   buildRetrievalQuery,
   classifyTurnIntent,
@@ -359,9 +360,12 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const state = updateSessionState(session, message, turnIntent.parsed);
     const answerState = {
       ...state,
-      memorySummary: buildConversationMemorySummary(session)
+      memorySummary: buildActiveNeedMemorySummary(session)
     };
     const history = getRecentTurns(session);
+    // new_search 已经代表用户切到一个新的商品需求。检索 query 不带旧历史，回答 Prompt 也必须同步隔离；
+    // 否则真实 LLM 会把上一轮“第二三款对比/哪个更清爽”写进“推荐无糖饮料”这类新需求回答。
+    const answerHistory = turnIntent.type === TURN_INTENTS.NEW_SEARCH ? [] : history;
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message, {
       includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,
@@ -458,7 +462,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
-        for await (const token of streamModelAnswer(config, message, answerProducts, history, finalAnswerState)) {
+        for await (const token of streamModelAnswer(config, message, answerProducts, answerHistory, finalAnswerState)) {
           answerText += token;
           markFirstToken({ cacheHit: false });
           writeSse(res, "token", { content: token });
@@ -477,7 +481,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
 
         // 模型生成是增强层，检索到的商品候选才是可信事实来源。模型失败时改用同一批 answerProducts
         // 生成本地确定性回答，保证“回答文本、对比组件、商品卡片”仍然来自同一组可校验商品。
-        const localAnswer = buildLocalAnswer(message, answerProducts, history, finalAnswerState);
+        const localAnswer = buildLocalAnswer(message, answerProducts, answerHistory, finalAnswerState);
         if (answerText.trim()) answerText += "\n\n";
         answerText += localAnswer;
         await streamText(res, localAnswer, () => markFirstToken({ cacheHit: false, fallback: true }));
@@ -486,7 +490,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       // 本地兜底回答也使用同一组候选，确保文本编号和商品卡片一一对应。
       // 价格/预算/指代追问使用后端确定性回答：这类问题的正确性主要取决于硬过滤结果，
       // 由模板列出同一批 answerProducts，可以避免模型把上一轮已淘汰的商品重新写进回答。
-      answerText = buildLocalAnswer(message, answerProducts, history, finalAnswerState);
+      answerText = buildLocalAnswer(message, answerProducts, answerHistory, finalAnswerState);
       await streamText(res, answerText, () => markFirstToken({ cacheHit: false }));
     }
 

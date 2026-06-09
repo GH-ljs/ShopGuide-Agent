@@ -32,6 +32,13 @@ function normalizeNumberArray(value) {
     .filter((item) => Number.isInteger(item) && item > 0);
 }
 
+function filterCurrentTurnPreferences(modelPreferences, fallbackPreferences, message) {
+  const fallbackSet = new Set(fallbackPreferences || []);
+  // 软偏好也必须有本轮用户输入作为依据。LLM 能看到 current_session，很容易把历史里的“清爽/控油”
+  // 带到新的“无糖饮料”需求里；这里只保留规则层已识别或原文直接出现的偏好词。
+  return modelPreferences.filter((item) => fallbackSet.has(item) || String(message || "").includes(item));
+}
+
 function isBoundaryTurnType(type) {
   return BOUNDARY_TURN_TYPES.has(type);
 }
@@ -130,10 +137,11 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
       : isBoundaryTurnType(fallbackIntent.type) && modelTurnType !== fallbackIntent.type
         ? fallbackIntent.type
         : modelTurnType;
-  // 规则层已经识别出的 compare/new_search 属于会话边界判断，优先级高于模型自由规划。
-  // 这样可以防止 LLM 因为历史里有“更清爽/第几款”而把新的“办公轻薄笔记本”误合并进旧对比。
+  // 规则层已经识别出的 compare/new_search，以及“50预算”这类明确价格约束，属于会话边界判断，
+  // 优先级高于模型自由规划。这样可以防止 LLM 因为历史里有“更清爽/第几款”而把新的需求或预算追问误合并进旧对比。
+  const hasFallbackPriceBoundary = Number.isFinite(fallbackIntent.parsed.price?.maxPrice) || Number.isFinite(fallbackIntent.parsed.price?.minPrice);
   const protectedTurnType =
-    fallbackIntent.type === TURN_INTENTS.COMPARE || fallbackIntent.type === TURN_INTENTS.NEW_SEARCH
+    fallbackIntent.type === TURN_INTENTS.COMPARE || fallbackIntent.type === TURN_INTENTS.NEW_SEARCH || hasFallbackPriceBoundary
       ? fallbackIntent.type
       : turnType;
   const canAcceptModelCatalogScope = protectedTurnType === TURN_INTENTS.NEW_SEARCH || protectedTurnType === TURN_INTENTS.REFINE;
@@ -149,7 +157,12 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
   const minPrice = canUseModelPrice ? normalizeNumber(rawPlan?.min_price ?? rawPlan?.hard_filters?.min_price) : null;
   const priceDirection = canUseModelPrice && ["lower", "higher"].includes(rawPlan?.price_direction) ? rawPlan.price_direction : "none";
   const modelNegativeTerms = hasNegativeSignal(message) ? normalizeStringArray(rawPlan?.negative_terms ?? rawPlan?.hard_filters?.negative_terms) : [];
-  const modelPreferences = normalizeStringArray(rawPlan?.preferences ?? rawPlan?.soft_preferences);
+  const fallbackPreferences = fallbackIntent.parsed.preferences || [];
+  const modelPreferences = filterCurrentTurnPreferences(
+    normalizeStringArray(rawPlan?.preferences ?? rawPlan?.soft_preferences),
+    fallbackPreferences,
+    message
+  );
   const focus = normalizeStringArray(rawPlan?.focus);
   const targetRefs = normalizeNumberArray(rawPlan?.target_refs).filter((index) => index <= referenceProducts.length);
   const requestedScope = normalizeString(rawPlan?.scope);
@@ -190,7 +203,7 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
         minPrice: minPrice ?? fallbackIntent.parsed.price?.minPrice ?? null,
         negativeTerms: modelNegativeTerms.length ? modelNegativeTerms : fallbackIntent.parsed.negativeTerms
       },
-      softPreferences: modelPreferences.length ? modelPreferences : fallbackIntent.parsed.preferences,
+      softPreferences: modelPreferences.length ? modelPreferences : fallbackPreferences,
       isShoppingGuidance:
         protectedTurnType === TURN_INTENTS.OUT_OF_SCOPE ? false : typeof rawPlan?.is_shopping_guidance === "boolean" ? rawPlan.is_shopping_guidance : true,
       boundaryReason: normalizeString(rawPlan?.boundary_reason),
@@ -202,6 +215,7 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
         fallbackType: fallbackIntent.type,
         modelType: modelTurnType,
         boundaryFallbackApplied: isBoundaryTurnType(fallbackIntent.type) && modelTurnType !== fallbackIntent.type,
+        softPreferencesAccepted: modelPreferences.length,
         targetRefsAccepted: targetRefs.length === normalizeNumberArray(rawPlan?.target_refs).length
       }
     },
@@ -216,7 +230,7 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
       // LLM 解析层只做“理解”，不能凭空把用户没说的预算/排除条件升级成硬过滤条件；
       // 否则一句“办公轻薄笔记本”可能被模型误补“预算/品牌/配置”，导致检索阶段直接空结果。
       negativeTerms: modelNegativeTerms.length ? modelNegativeTerms : fallbackIntent.parsed.negativeTerms,
-      preferences: modelPreferences.length ? modelPreferences : fallbackIntent.parsed.preferences
+      preferences: modelPreferences.length ? modelPreferences : fallbackPreferences
     }
   };
 }

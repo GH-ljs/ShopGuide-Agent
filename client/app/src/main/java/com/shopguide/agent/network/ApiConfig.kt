@@ -7,6 +7,6 @@ object ApiConfig {
 //    模拟机
 //    const val BASE_URL = "http://10.0.2.2:3001"
 //    真机
-    const val BASE_URL = "http://192.168.1.101:3001"
+    const val BASE_URL = "http://10.72.182.178:3001"
     const val CHAT_PRODUCT_LIMIT = 4
 }

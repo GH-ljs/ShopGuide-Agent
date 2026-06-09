@@ -405,6 +405,34 @@ async function run() {
     );
 
     results.push(
+      await runCase("新商品需求隔离：防晒对比后切到无糖饮料不应继续对比旧候选", async () => {
+        const conversationId = "memory-sunscreen-to-beverage-budget";
+        await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);
+        await chat(baseUrl, conversationId, "第二和第三对比下", 6);
+        const fresh = await chat(baseUrl, conversationId, "哪个更清爽", 6);
+        assert(fresh.comparison?.columns?.length === 2, "freshness follow-up should compare sunscreen candidates first");
+
+        const beverages = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        assert(beverages.products.length > 0, "new beverage need should return products");
+        assert(beverages.products.every((product) => product.category === "食品饮料"), "new beverage need should switch category");
+        assert(!beverages.comparison, "new beverage search should not emit comparison payload");
+        assert(!/第二|第三|对比|防晒|油皮|控油/.test(beverages.tokenText), "beverage answer should not mention stale sunscreen comparison constraints");
+
+        const budget = await chat(baseUrl, conversationId, "50预算", 6);
+        assert(budget.products.length > 0, "beverage budget follow-up should keep matching products");
+        assert(budget.products.every((product) => product.category === "食品饮料"), "budget follow-up should not return skincare products");
+        assert(budget.products.every((product) => Number(product.price) <= 50), "budget follow-up should respect 50 max price");
+        assert(!budget.comparison, "budget follow-up should not emit comparison payload");
+        assert(!/第二|第三|对比|防晒|油皮|控油/.test(budget.tokenText), "budget answer should not mention stale sunscreen comparison constraints");
+
+        const debug = await debugRetrieve(baseUrl, conversationId, "这些里面怎么选", 6);
+        const activeNeed = debug.session.needs.find((need) => need.needId === debug.session.activeNeedId);
+        assert(activeNeed?.itemType === "饮料", "active need should remain beverage");
+        assert(activeNeed?.maxPrice === 50, "active beverage need should remember maxPrice=50");
+      })
+    );
+
+    results.push(
       await runCase("商品名指代：对比后追问安热沙这款只返回安热沙", async () => {
         const conversationId = "memory-name-reference";
         const setup = await chat(baseUrl, conversationId, "推荐一款适合油皮的防晒霜", 6);

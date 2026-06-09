@@ -173,6 +173,57 @@ async function run() {
           {
             message: {
               content: JSON.stringify({
+                turn_type: "compare",
+                scope: "last_compared_products",
+                preferences: ["无糖", "清爽"],
+                reason: "模型误把上一轮防晒清爽追问带到无糖饮料"
+              })
+            }
+          }
+        ]
+      })
+    });
+    const beverageGuardSession = resetSession("intent-beverage-new-search-guard-test");
+    updateSessionState(beverageGuardSession, "推荐一款适合油皮的防晒霜");
+    const guardedBeverageIntent = await parseTurnIntent(mockConfig, beverageGuardSession, "推荐无糖饮料");
+    assert(guardedBeverageIntent.type === TURN_INTENTS.NEW_SEARCH, "beverage new search should not inherit old comparison intent");
+    assert(guardedBeverageIntent.parsed.itemIntent?.itemType === "饮料", "beverage new search should keep beverage item boundary");
+    assert(guardedBeverageIntent.parsed.preferences.includes("无糖"), "current beverage preference should be preserved");
+    assert(!guardedBeverageIntent.parsed.preferences.includes("清爽"), "stale freshness preference from history should be dropped");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "compare",
+                scope: "last_compared_products",
+                preferences: ["清爽"],
+                max_price: 50
+              })
+            }
+          }
+        ]
+      })
+    });
+    const budgetGuardSession = resetSession("intent-budget-refine-guard-test");
+    updateSessionState(budgetGuardSession, "推荐无糖饮料");
+    const guardedBudgetIntent = await parseTurnIntent(mockConfig, budgetGuardSession, "50预算");
+    assert(guardedBudgetIntent.type === TURN_INTENTS.REFINE, "explicit budget follow-up should not be downgraded to compare");
+    assert(guardedBudgetIntent.parsed.price.maxPrice === 50, "explicit 50 budget should be preserved");
+    assert(!guardedBudgetIntent.parsed.preferences.includes("清爽"), "budget follow-up should not inherit stale freshness preference");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
                 turn_type: "new_search",
                 scope: "full_catalog",
                 category: "数码电子",

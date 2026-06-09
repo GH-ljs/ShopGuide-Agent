@@ -89,6 +89,12 @@ export function buildConversationMemorySummary(session) {
   return needSummaries.length ? needSummaries.join("\n") : "";
 }
 
+export function buildActiveNeedMemorySummary(session) {
+  // 回答生成只需要当前 active need 的摘要；跨需求检索才需要完整 summary。
+  // 这样“防晒对比 -> 无糖饮料”时，模型不会在新饮料回答里看到旧防晒的“清爽/第二三款”要求。
+  return formatNeedSummary(getActiveNeed(session));
+}
+
 function refreshSessionSummary(session) {
   // summary 是从结构化 needs 派生出来的长期摘要，不直接相信模型自由生成。
   // 它用于给检索和 Prompt 提供长对话背景，但真正的预算、排除词和商品边界仍以 state/products 为准。

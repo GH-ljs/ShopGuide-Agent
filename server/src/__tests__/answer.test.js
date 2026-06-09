@@ -78,10 +78,26 @@ function run() {
   );
 
   const sunscreenPair = products.filter((product) => product.productId === "p_beauty_023" || product.productId === "p_beauty_010");
+  const genericSunscreenComparison = buildComparisonPayload("第二和第三对比下", sunscreenPair, {
+    answerMode: "compare",
+    preferences: ["油皮", "控油", "清爽"]
+  });
   const sunscreenComparison = buildComparisonPayload("哪个更清爽", sunscreenPair, {
     answerMode: "compare",
     preferences: ["油皮", "控油", "清爽"]
   });
+  assert(
+    genericSunscreenComparison.conclusion !== sunscreenComparison.conclusion,
+    "generic comparison and explicit freshness decision should not share the same conclusion"
+  );
+  assert(
+    !genericSunscreenComparison.rows.some((row) => row.label === "清爽/肤感"),
+    "generic comparison should not add a freshness-specific row"
+  );
+  assert(
+    sunscreenComparison.rows.some((row) => row.label === "清爽/肤感"),
+    "freshness decision should add a freshness-specific comparison row"
+  );
   const sunscreenTradeoff = sunscreenComparison.rows.find((row) => row.label === "取舍点");
   const sunscreenScenario = sunscreenComparison.rows.find((row) => row.label === "适合场景");
   assert(

@@ -171,6 +171,39 @@ function inferComparisonFocus(message, state = {}) {
   return "";
 }
 
+function inferExplicitComparisonFocus(message) {
+  // 只看“本轮用户话”里的维度词。普通“第二和第三对比下”不应该自动继承上一轮的“清爽/控油”，
+  // 否则普通对比和“哪个更清爽”会输出同一套结论，用户看不出追问维度带来的差异。
+  return inferComparisonFocus(message, { preferences: [] });
+}
+
+function isGenericComparisonQuestion(message) {
+  return /(对比|比较|区别|差别|不同)/.test(message) && !/(哪个|哪款|哪一个|谁|选哪|怎么选|更|些|一点|不那么|没那么)/.test(message);
+}
+
+function focusRowLabel(focus) {
+  if (focus === "肤感") return "清爽/肤感";
+  return `${focus}表现`;
+}
+
+function productFocusText(product, focus) {
+  const title = `${product.title} ${product.brand}`;
+  if (focus === "肤感" && isCategory(product, "美妆护肤")) {
+    if (/(理肤泉|易敏肌|敏感肌|特护)/.test(title)) return "更偏清爽控油，兼顾敏感肌";
+    if (/(安热沙|防水防汗|户外|身体)/.test(title)) return "防水防汗强，肤感不如清爽款";
+    if (/(欧莱雅|水感|隔离|提亮)/.test(title)) return "水感轻薄，兼顾妆前提亮";
+  }
+
+  if (focus === "价格") return `${product.basePrice} 元`;
+  const keywordsByFocus = {
+    通勤: ["通勤", "办公", "出差", "便携", "轻薄", "轻量", "续航"],
+    场景: ["户外", "运动", "防水", "防汗", "续航", "耐用"],
+    健康: ["健康", "天然", "无糖", "0糖", "零糖", "低糖", "无添加", "低负担"]
+  };
+  const matched = matchedKeywords(product, keywordsByFocus[focus] || []);
+  return matched.length ? matched.slice(0, 3).join("、") : compactFeatureText(product);
+}
+
 function productEvidenceText(product) {
   return [
     product.title,
@@ -216,6 +249,16 @@ function pickRecommendedProduct(message, products, state = {}) {
 }
 
 function buildDecisionSummary(message, products, state = {}) {
+  const explicitFocus = inferExplicitComparisonFocus(message);
+  if (!explicitFocus && isGenericComparisonQuestion(message)) {
+    const productSummaries = products
+      .map((product, index) => `第 ${index + 1} 款偏${comparisonTradeoffText(product)}`)
+      .join("；");
+    // 普通“对比一下”先呈现差异，不把上一轮偏好直接升级成单一推荐结论。
+    // 如果用户继续问“哪个更清爽/哪个更适合户外”，下一轮再按明确维度给决策。
+    return `明确结论：这两款主要差异是 ${productSummaries}。如果你更看重清爽肤感、户外防水或价格，我可以继续按单一维度帮你定。`;
+  }
+
   const recommendation = pickRecommendedProduct(message, products, state);
   if (!recommendation) {
     return "明确结论：这几款没有明显压倒性的单一选择。你可以再补一句最看重什么，例如预算、通勤、续航、控油或户外，我再按这个维度给你排序。";
@@ -264,7 +307,20 @@ export function buildComparisonPayload(message, products, state = {}) {
   const recommendationMatch = decisionSummary.match(/更推荐第\s*(\d+)\s*款/);
   const recommendedIndex = recommendationMatch ? Number(recommendationMatch[1]) - 1 : -1;
   const recommendedProduct = products[recommendedIndex] || null;
+  const explicitFocus = inferExplicitComparisonFocus(message);
+  const focusRows = explicitFocus
+    ? [
+        {
+          label: focusRowLabel(explicitFocus),
+          values: products.map((product) => ({
+            productId: product.productId,
+            value: productFocusText(product, explicitFocus)
+          }))
+        }
+      ]
+    : [];
   const rows = [
+    ...focusRows,
     {
       label: "价格",
       values: products.map((product) => ({
