@@ -42,16 +42,17 @@ const hotQueryCache = createHotQueryCache({
   ttlMs: Number(process.env.HOT_QUERY_CACHE_TTL_MS || 10 * 60 * 1000)
 });
 
-function shouldUseDeterministicAnswer(config, turnIntent, state, message) {
+export function shouldUseDeterministicAnswer(config, turnIntent, state, message) {
   if (!config.llmApiKey) return true;
   if (turnIntent.type === TURN_INTENTS.REFER || turnIntent.type === TURN_INTENTS.COMPARE) return true;
-  if (turnIntent.source === "llm") return false;
   const hasPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
   const isPriceFollowUp = /(便宜|贵|预算|以内|以下|不超过|不要超过|最多|控制在|\d+\s*万)/.test(message);
 
-  // 预算和价格方向属于后端可验证的硬约束，优先使用确定性回答可以保证“文字列出的商品”和
-  // products 事件里的卡片完全一致，避免模型被历史回答里的旧候选污染后继续展示不符合条件的商品。
-  return hasPriceBoundary || isPriceFollowUp;
+  // 预算和价格方向属于后端可验证的硬约束，即使意图解析来自 LLM，也优先使用确定性回答。
+  // 否则模型会看到历史里的“第二三款对比/哪个更清爽”，把已经正确过滤出的笔记本又写成旧对比追问。
+  if (hasPriceBoundary || isPriceFollowUp) return true;
+  if (turnIntent.source === "llm") return false;
+  return false;
 }
 
 function sendJson(res, status, payload) {
@@ -363,9 +364,10 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       memorySummary: buildActiveNeedMemorySummary(session)
     };
     const history = getRecentTurns(session);
+    const hasAnswerPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
+    const answerHistory = turnIntent.type === TURN_INTENTS.NEW_SEARCH || hasAnswerPriceBoundary ? [] : history;
     // new_search 已经代表用户切到一个新的商品需求。检索 query 不带旧历史，回答 Prompt 也必须同步隔离；
     // 否则真实 LLM 会把上一轮“第二三款对比/哪个更清爽”写进“推荐无糖饮料”这类新需求回答。
-    const answerHistory = turnIntent.type === TURN_INTENTS.NEW_SEARCH ? [] : history;
     // 检索 query 不只用当前 message，还会拼入最近对话和上一轮商品，支撑“再便宜点”这类省略式追问。
     const retrievalQuery = buildRetrievalQuery(session, message, {
       includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,

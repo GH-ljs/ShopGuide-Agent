@@ -2,6 +2,7 @@
 // 这样比赛演示或本地开发即使没有配置外部 LLM，也不会影响 RAG 主链路。
 import { parseTurnIntent } from "../services/intent.js";
 import { getSession, resetSession, TURN_INTENTS, updateSessionState } from "../services/memory.js";
+import { shouldUseDeterministicAnswer } from "../http.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -20,6 +21,11 @@ async function run() {
   const pricierIntent = await parseTurnIntent(config, getSession("intent-test"), "太便宜了");
   assert(pricierIntent.source === "rules", "price direction fallback should stay rule-based without key");
   assert(pricierIntent.type === TURN_INTENTS.REFINE, "太便宜了 should continue the current conversation");
+
+  assert(
+    shouldUseDeterministicAnswer({ llmApiKey: "mock-key" }, { type: TURN_INTENTS.REFINE, source: "llm" }, { maxPrice: 10000 }, "1万预算"),
+    "budget follow-up should use deterministic answer even when intent parser used LLM"
+  );
 
   const explicitBudgetSession = resetSession("intent-explicit-budget-priority");
   explicitBudgetSession.lastProducts = [

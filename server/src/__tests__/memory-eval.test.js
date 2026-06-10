@@ -395,7 +395,8 @@ async function run() {
         assert(budget.products.every((product) => product.category === "数码电子"), "budget follow-up should not return skincare products");
         assert(budget.products.every((product) => product.subCategory === "笔记本电脑"), "budget follow-up should remain notebook");
         assert(budget.products.every((product) => Number(product.price) <= 10000), "budget follow-up should respect 10000 max price");
-        assert(!/防晒|油皮|清爽|控油|肤感/.test(budget.tokenText), "notebook answer should not mention stale sunscreen preferences");
+        assert(!budget.comparison, "notebook budget follow-up should not emit comparison payload");
+        assert(!/第二|第三|对比|防晒|油皮|清爽|控油|肤感/.test(budget.tokenText), "notebook answer should not mention stale sunscreen comparison constraints");
 
         const debug = await debugRetrieve(baseUrl, conversationId, "这些里面怎么选", 6);
         const activeNeed = debug.session.needs.find((need) => need.needId === debug.session.activeNeedId);

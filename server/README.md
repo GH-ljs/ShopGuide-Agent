@@ -98,7 +98,7 @@ ARK_EMBEDDING_PATH=/embeddings/multimodal
 ARK_EMBEDDING_API_KEY=你的 Ark embedding API Key
 ```
 
-更完整的 Qdrant 排障和设计说明见 [../docs/qdrant.md](../docs/qdrant.md)。
+更完整的 Qdrant 排障和设计说明见 [../docs/operations/qdrant.md](../docs/operations/qdrant.md)。
 
 ### 3. 聊天模型
 

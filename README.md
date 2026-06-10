@@ -104,7 +104,7 @@ LLM 负责语义理解和自然语言表达，后端负责可信边界、状态�
 ShopGuide-Agent/
 ├─ client/                    # Android 原生客户端，Kotlin + Jetpack Compose
 ├─ server/                    # Node.js 后端，负责 RAG、SSE、商品接口和模型调用
-├─ docs/                      # API、架构、Qdrant、Demo 验收和项目要求文档
+├─ docs/                      # 文档入口、提交材料、技术参考、运行验收和质量记录
 ├─ ecommerce_agent_dataset/   # 商品 JSON 和图片数据
 ├─ docker-compose.yml         # 本地 Qdrant 服务配置
 └─ README.md                  # 项目总览
@@ -356,11 +356,12 @@ node src/__tests__/memory-eval.test.js
 
 - [后端说明](server/README.md)
 - [客户端说明](client/README.md)
-- [API 文档](docs/api.md)
-- [系统架构](docs/architecture.md)
-- [Qdrant 配置](docs/qdrant.md)
-- [Demo 验收清单](docs/demo-checklist.md)
-- [项目进度](docs/progress.md)
+- [文档导航](docs/README.md)
+- [API 文档](docs/reference/api.md)
+- [系统架构](docs/reference/architecture.md)
+- [Qdrant 配置](docs/operations/qdrant.md)
+- [Demo 验收清单](docs/operations/demo-checklist.md)
+- [项目进度](docs/quality/progress.md)
 - [项目背景与要求](docs/project-background-requirements.md)
 
 ## 提交与安全

@@ -48,8 +48,8 @@
 屏幕展示：
 
 - `docs/submission/design-document.md` 架构图。
-- `server/src/vectordb/embedding.js`、`server/src/vectordb/qdrant.js` 或 `docs/qdrant.md`。
-- `server/src/http.js` 或 `docs/architecture.md`。
+- `server/src/vectordb/embedding.js`、`server/src/vectordb/qdrant.js` 或 `docs/operations/qdrant.md`。
+- `server/src/http.js` 或 `docs/reference/architecture.md`。
 
 ## 3. 基础推荐
 

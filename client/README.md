@@ -237,7 +237,7 @@ GET /api/products/:productId
 | `/api/products/:productId/image` | GET | 商品图片 |
 | `/api/conversations/reset` | POST | 重置后端会话记忆 |
 
-详细接口说明见 [../docs/api.md](../docs/api.md)。
+详细接口说明见 [../docs/reference/api.md](../docs/reference/api.md)。
 
 ## 依赖
 

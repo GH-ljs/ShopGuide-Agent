@@ -32,7 +32,12 @@ qdrant_storage/
   本地 Qdrant 运行数据目录，不提交。
 
 docs/
-  架构、API、RAG 链路、验收清单、评审模式和最终提交材料。
+  README.md 文档导航
+  submission/ 最终提交材料
+  reference/ 架构、API、RAG 链路、Agent 编排和评审模式
+  operations/ Demo 验收清单和 Qdrant 配置
+  quality/ 项目进度和检索评测
+  archive/ 历史草稿
 ```
 
 ## 3. 技术栈
