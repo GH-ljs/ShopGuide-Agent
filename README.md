@@ -1,5 +1,7 @@
 # ShopGuide Agent
 
+> 项目状态更新：课程课题已经结束，本仓库后续转型为面向秋招简历的前端/全栈/Agent 开发项目。旧版 Android 客户端作为历史实现保留；新的主线目标是建设 Web 客户端（React 或 Vue）+ Node.js RAG 后端，突出流式 Agent 交互、可信商品检索、结构化商品卡片和可解释 RAG 链路。
+
 基于 RAG 的电商智能导购 AI Agent。项目实现了从 Android 原生客户端到 Node.js 后端 RAG 服务的端到端闭环：
 
 ```text

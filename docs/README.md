@@ -41,6 +41,5 @@
 
 | 文档 | 用途 |
 | --- | --- |
-| [project-background-requirements.md](project-background-requirements.md) | 课题背景与要求，开发前优先阅读 |
+| [project-background-requirements.md](project-background-requirements.md) | 项目转型方向：面向秋招简历的 Web 全栈 Agent 项目 |
 | [archive/project-requirements.md](archive/project-requirements.md) | 早期项目要求草稿，保留作历史参考 |
-

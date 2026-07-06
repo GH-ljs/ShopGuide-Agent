@@ -12,6 +12,7 @@ client/local.properties
 client/**/build/
 client/LOCAL_ANDROID_DEBUG.md
 node_modules/
+.tools/
 dist/
 build/
 qdrant_storage/
@@ -29,4 +30,5 @@ yarn-error.log*
 ~$*.docx
 AGENTS.md
 project-requirements.md
+参考项目
 
