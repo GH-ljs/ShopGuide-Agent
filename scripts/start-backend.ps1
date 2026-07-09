@@ -6,28 +6,37 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $serverDir = Join-Path $repoRoot "server"
-$localNode = Join-Path $repoRoot ".tools\node-v24.18.0-win-x64\node.exe"
-$localNpmCli = Join-Path $repoRoot ".tools\node-v24.18.0-win-x64\node_modules\npm\bin\npm-cli.js"
+$toolsDir = Join-Path $repoRoot ".tools"
+$tempDir = Join-Path $env:LOCALAPPDATA "Temp"
 
-if (Test-Path $localNode) {
-  # 优先使用项目本地便携 Node，避免新电脑没有配置系统 PATH 时后端无法启动。
+if (Test-Path $tempDir) {
+  $env:TEMP = $tempDir
+  $env:TMP = $tempDir
+}
+
+$localNodeDir = Get-ChildItem $toolsDir -Directory -Filter "node-v*-win-x64" -ErrorAction SilentlyContinue |
+  Sort-Object Name -Descending |
+  Select-Object -First 1
+$localNode = if ($localNodeDir) { Join-Path $localNodeDir.FullName "node.exe" } else { "" }
+$localNpmCli = if ($localNodeDir) { Join-Path $localNodeDir.FullName "node_modules\npm\bin\npm-cli.js" } else { "" }
+
+if ($localNode -and (Test-Path $localNode)) {
   $node = $localNode
 } else {
   $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
   if (-not $nodeCommand) {
-    throw "未找到 Node.js。请先安装 Node.js LTS，或把便携 Node 放到 .tools\node-v24.18.0-win-x64。"
+    throw "Node.js was not found. Install Node.js LTS or put portable Node under .tools\node-v*-win-x64."
   }
   $node = $nodeCommand.Source
 }
 
 if ($InstallDependencies) {
-  if (-not (Test-Path $localNpmCli)) {
-    throw "未找到 npm 入口，无法安装依赖。请安装系统 Node.js LTS 后在 server 目录执行 npm install。"
+  if (-not ($localNpmCli -and (Test-Path $localNpmCli))) {
+    throw "npm entry was not found. Install system Node.js LTS or make sure portable Node includes npm."
   }
 
   Push-Location $serverDir
   try {
-    # 依赖安装只在显式传入 -InstallDependencies 时执行，避免每次启动都访问网络。
     & $node $localNpmCli install
   } finally {
     Pop-Location
@@ -36,7 +45,7 @@ if ($InstallDependencies) {
 
 Push-Location $serverDir
 try {
-  Write-Host "ShopGuide 后端启动中：http://localhost:3001"
+  Write-Host "ShopGuide backend: http://localhost:3001"
   & $node "src\index.js"
 } finally {
   Pop-Location

@@ -79,6 +79,55 @@ const cases = [
     expectedItemIntent: "背包",
     requiredSubCategory: "背包",
     minResults: 1
+  },
+  {
+    query: "推荐上衣",
+    expectedCategory: "服饰运动",
+    expectedItemIntent: "上衣",
+    allowedSubCategories: ["短袖T恤", "速干T恤", "卫衣"],
+    minResults: 1
+  },
+  {
+    query: "推荐卫衣",
+    expectedCategory: "服饰运动",
+    expectedItemIntent: "卫衣",
+    requiredSubCategory: "卫衣",
+    minResults: 1
+  },
+  {
+    query: "推荐运动裤",
+    expectedCategory: "服饰运动",
+    expectedItemIntent: "运动裤",
+    allowedSubCategories: ["运动短裤", "运动长裤"],
+    minResults: 1
+  },
+  {
+    query: "推荐帽子",
+    expectedCategory: "服饰运动",
+    expectedItemIntent: "帽子",
+    requiredSubCategory: "帽子",
+    minResults: 1
+  },
+  {
+    query: "推荐手机",
+    expectedCategory: "数码电子",
+    expectedItemIntent: "手机",
+    requiredSubCategory: "智能手机",
+    minResults: 1
+  },
+  {
+    query: "推荐咖啡",
+    expectedCategory: "食品饮料",
+    expectedItemIntent: "咖啡",
+    requiredSubCategory: "咖啡",
+    minResults: 1
+  },
+  {
+    query: "推荐方便面",
+    expectedCategory: "食品饮料",
+    expectedItemIntent: "方便面",
+    requiredSubCategory: "方便食品",
+    minResults: 1
   }
 ];
 
@@ -98,6 +147,12 @@ function assertCase(debug, testCase) {
     assert(product.category === testCase.expectedCategory, `${testCase.query} returned wrong category: ${product.title}`);
     if (testCase.requiredSubCategory) {
       assert(product.subCategory === testCase.requiredSubCategory, `${testCase.query} returned wrong subcategory: ${product.title}`);
+    }
+    if (testCase.allowedSubCategories) {
+      assert(
+        testCase.allowedSubCategories.includes(product.subCategory),
+        `${testCase.query} returned wrong subcategory: ${product.title}`
+      );
     }
     if (Number.isFinite(testCase.maxPrice)) {
       assert(product.basePrice <= testCase.maxPrice, `${testCase.query} returned product over budget: ${product.title}`);

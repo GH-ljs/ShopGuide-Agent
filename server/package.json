@@ -7,6 +7,7 @@
     "dev": "node src/index.js",
     "start": "node src/index.js",
     "test:answer": "node src/__tests__/answer.test.js",
+    "test:clarify": "node src/__tests__/clarify.test.js",
     "test:embedding": "node src/__tests__/embedding.test.js",
     "test:retrieval": "node src/__tests__/retrieval.test.js",
     "test:retrieval-quality": "node src/__tests__/retrieval-quality.test.js",

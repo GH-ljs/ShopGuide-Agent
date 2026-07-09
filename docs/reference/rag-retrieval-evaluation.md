@@ -138,7 +138,7 @@ MRR = 0.5
 
 ## 6. 为什么建议默认给 LLM 4 条
 
-Android 客户端曾设置：
+早期客户端曾设置：
 
 ```kotlin
 const val CHAT_PRODUCT_LIMIT = 6

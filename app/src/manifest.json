@@ -1,0 +1,21 @@
+{
+  "name": "ShopGuide Agent",
+  "appid": "__UNI__SHOPGUIDE",
+  "description": "跨端智能导购 Agent",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "transformPx": false,
+  "h5": {
+    "title": "ShopGuide Agent",
+    "devServer": {
+      "port": 5174
+    }
+  },
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": false
+    },
+    "usingComponents": true
+  }
+}

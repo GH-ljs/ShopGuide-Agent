@@ -37,7 +37,7 @@ data: {"error":{"code":"MODEL_ERROR","message":"模型服务暂时不可用","de
 | `MODEL_ERROR` | 模型调用失败，例如 API Key、模型名、余额、权限或网络问题 |
 | `INTERNAL_ERROR` | 未预期服务端异常 |
 
-说明：`NETWORK_ERROR` 是 Android 客户端本地归类，客户端连不上后端时收不到后端响应。
+说明：`NETWORK_ERROR` 是前端本地归类，客户端连不上后端时收不到后端响应。
 
 ## 2. GET `/api/health`
 

@@ -51,6 +51,18 @@ async function run() {
   const nameReferIntent = await parseTurnIntent(config, getSession("intent-test"), "安热沙这款如何");
   assert(nameReferIntent.type === TURN_INTENTS.REFER, "named product follow-up should refer to previous candidates");
 
+  const upperClothingSession = resetSession("intent-upper-clothing-new-search-test");
+  updateSessionState(upperClothingSession, "推荐防晒霜");
+  const upperClothingIntent = await parseTurnIntent(config, upperClothingSession, "推荐上衣");
+  assert(upperClothingIntent.type === TURN_INTENTS.NEW_SEARCH, "upper clothing request should switch away from previous candidates");
+  assert(upperClothingIntent.parsed.category === "服饰运动", "upper clothing request should infer clothing category");
+  assert(upperClothingIntent.parsed.itemIntent?.itemType === "上衣", "upper clothing request should infer upper clothing item boundary");
+
+  const outdoorClothingIntent = await parseTurnIntent(config, resetSession("intent-outdoor-clothing-feature-test"), "推荐上衣，户外使用，防晒防风，耐用");
+  assert(outdoorClothingIntent.type === TURN_INTENTS.NEW_SEARCH, "clothing sun-protection feature should not be treated as multi-need");
+  assert(outdoorClothingIntent.parsed.category === "服饰运动", "outdoor clothing feature should keep clothing category");
+  assert(outdoorClothingIntent.parsed.itemIntent?.itemType === "上衣", "outdoor clothing feature should keep upper clothing item boundary");
+
   const mockConfig = {
     llmApiKey: "mock-key",
     llmProvider: "ark",
@@ -196,6 +208,67 @@ async function run() {
     assert(guardedBeverageIntent.parsed.itemIntent?.itemType === "饮料", "beverage new search should keep beverage item boundary");
     assert(guardedBeverageIntent.parsed.preferences.includes("无糖"), "current beverage preference should be preserved");
     assert(!guardedBeverageIntent.parsed.preferences.includes("清爽"), "stale freshness preference from history should be dropped");
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "new_search",
+                scope: "full_catalog",
+                category: "服饰运动",
+                item_type: "上衣",
+                multi_need: false,
+                clarify_needed: true,
+                clarify_dimensions: ["clothing_scenario", "unknown_dimension"],
+                preferences: []
+              })
+            }
+          }
+        ]
+      })
+    });
+    const clarifyPlanIntent = await parseTurnIntent(mockConfig, resetSession("intent-llm-clarify-plan-test"), "推荐上衣");
+    assert(clarifyPlanIntent.type === TURN_INTENTS.NEW_SEARCH, "clarify planner should keep broad upper clothing as new_search");
+    assert(clarifyPlanIntent.plan.clarify.needed === true, "LLM clarify_needed should be preserved in validated plan");
+    assert(
+      clarifyPlanIntent.plan.clarify.dimensions.length === 1 &&
+        clarifyPlanIntent.plan.clarify.dimensions[0] === "clothing_scenario",
+      "validator should keep only supported clarify dimensions"
+    );
+
+    globalThis.fetch = async () => ({
+      ok: true,
+      body: {},
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                turn_type: "new_search",
+                scope: "full_catalog",
+                category: "服饰运动",
+                item_type: "上衣",
+                multi_need: false,
+                clarify_needed: false,
+                preferences: ["户外", "防晒", "防风", "耐用"]
+              })
+            }
+          }
+        ]
+      })
+    });
+    const clothingFeatureIntent = await parseTurnIntent(
+      mockConfig,
+      resetSession("intent-llm-clothing-feature-test"),
+      "推荐上衣，户外使用，防晒防风，耐用"
+    );
+    assert(clothingFeatureIntent.type === TURN_INTENTS.NEW_SEARCH, "LLM multi_need=false should keep clothing feature as one need");
+    assert(clothingFeatureIntent.plan.multiNeed === false, "validated plan should expose single-need decision");
+    assert(clothingFeatureIntent.parsed.itemIntent?.itemType === "上衣", "clothing feature should keep upper clothing item type");
 
     globalThis.fetch = async () => ({
       ok: true,

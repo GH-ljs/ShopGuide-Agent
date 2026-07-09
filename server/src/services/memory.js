@@ -6,6 +6,8 @@ import {
   extractNegativeTerms,
   extractPreferences,
   extractPriceConstraint,
+  hasClothingContext,
+  hasSunProtectionAsClothingFeature,
   inferCategory,
   inferItemIntent,
   ITEM_INTENTS,
@@ -330,6 +332,9 @@ function findMentionedItemTypes(message) {
   const itemTypes = new Set();
   for (const itemIntent of ITEM_INTENTS) {
     if (itemIntent.trigger.some((word) => message.includes(word))) itemTypes.add(itemIntent.itemType);
+  }
+  if (hasClothingContext(message) && hasSunProtectionAsClothingFeature(message)) {
+    itemTypes.delete("防晒");
   }
   return [...itemTypes];
 }

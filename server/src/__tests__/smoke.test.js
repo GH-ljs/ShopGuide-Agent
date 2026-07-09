@@ -86,11 +86,18 @@ async function run() {
     assert(Array.isArray(products), "products should be an array");
     assert(products.length === 100, "products length should be 100");
 
-    const first = await requestChat(baseUrl, "推荐一款防晒霜");
-    assert(first.some((item) => item.event === "token"), "chat should emit token event");
-    assert(first.some((item) => item.event === "review"), "chat should emit review event for judge/debug mode");
-    assert(first.some((item) => item.event === "products"), "chat should emit products event");
-    assert(first.some((item) => item.event === "done"), "chat should emit done event");
+    const broadSunscreen = await requestChat(baseUrl, "推荐一款防晒霜", "smoke-clarify-demo");
+    assert(broadSunscreen.some((item) => item.event === "token"), "chat should emit token event");
+    assert(broadSunscreen.some((item) => item.event === "clarify"), "broad sunscreen query should emit clarify event");
+    assert(broadSunscreen.some((item) => item.event === "review"), "chat should emit review event for judge/debug mode");
+    const clarifyProducts = broadSunscreen.find((item) => item.event === "products")?.data.products || [];
+    assert(clarifyProducts.length === 0, "clarify response should not return product cards before user narrows intent");
+
+    const first = await requestChat(baseUrl, "推荐一款适合通勤清爽使用的防晒霜", "smoke-demo");
+    assert(first.some((item) => item.event === "token"), "narrowed chat should emit token event");
+    assert(first.some((item) => item.event === "review"), "narrowed chat should emit review event for judge/debug mode");
+    assert(first.some((item) => item.event === "products"), "narrowed chat should emit products event");
+    assert(first.some((item) => item.event === "done"), "narrowed chat should emit done event");
 
     const reviewEvent = first.find((item) => item.event === "review");
     assert(reviewEvent.data.review.mode === "review", "review event should expose stable review mode");
@@ -142,7 +149,7 @@ async function run() {
     assert(!sunscreenBudgetText.includes("268"), "不要超过200 answer text should not mention over-budget 268 yuan product");
     assert(!sunscreenBudgetText.includes("理肤泉"), "不要超过200 answer text should not mention over-budget La Roche-Posay product");
 
-    const referFirst = await requestChat(baseUrl, "推荐防晒霜", "refer-demo");
+    const referFirst = await requestChat(baseUrl, "推荐适合油皮通勤的防晒霜", "refer-demo");
     const referFirstProducts = referFirst.find((item) => item.event === "products")?.data.products || [];
     assert(referFirstProducts.length > 0, "refer setup should return products");
     const referSecond = await requestChat(baseUrl, "第一个怎么样", "refer-demo");
@@ -163,7 +170,7 @@ async function run() {
     const sequentialThirdProducts = sequentialThird.find((item) => item.event === "products")?.data.products || [];
     assert(sequentialThirdProducts[0].productId === sequentialSetupProducts[2].productId, "third refer should still return original third candidate after second refer");
 
-    await requestChat(baseUrl, "推荐防晒霜", "new-search-demo");
+    await requestChat(baseUrl, "推荐适合油皮通勤的防晒霜", "new-search-demo");
     const newSearch = await requestChat(baseUrl, "我想买蓝牙耳机", "new-search-demo");
     const newSearchProducts = newSearch.find((item) => item.event === "products")?.data.products || [];
     assert(newSearchProducts.length > 0, "new search should return products");

@@ -1,0 +1,101 @@
+<script setup lang="ts">
+import type { ComparisonPayload } from "../../types/shopguide";
+
+defineProps<{
+  comparison: ComparisonPayload;
+}>();
+</script>
+
+<template>
+  <view class="comparison" v-if="comparison.columns?.length && comparison.rows?.length">
+    <text class="comparison-title">{{ comparison.title || "商品对比" }}</text>
+    <text v-if="comparison.conclusion" class="comparison-conclusion">{{ comparison.conclusion }}</text>
+
+    <scroll-view scroll-x class="comparison-scroll">
+      <view class="comparison-table">
+        <view class="comparison-row header-row">
+          <text class="cell label-cell">维度</text>
+          <text v-for="column in comparison.columns" :key="column.productId" class="cell product-cell">
+            {{ column.label || column.brand || column.title || column.productId }}
+          </text>
+        </view>
+        <view v-for="row in comparison.rows" :key="row.label" class="comparison-row">
+          <text class="cell label-cell">{{ row.label }}</text>
+          <text v-for="column in comparison.columns" :key="column.productId" class="cell product-cell">
+            {{ row.values[column.productId] || "-" }}
+          </text>
+        </view>
+      </view>
+    </scroll-view>
+  </view>
+</template>
+
+<style scoped>
+.comparison {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d8e0dd;
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.comparison-title {
+  color: #1d252c;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.comparison-conclusion {
+  color: #46554f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.comparison-scroll {
+  width: 100%;
+}
+
+.comparison-table {
+  min-width: 520px;
+  border: 1px solid #d8e0dd;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.comparison-row {
+  display: flex;
+  border-top: 1px solid #e3e9e6;
+}
+
+.comparison-row:first-child {
+  border-top: 0;
+}
+
+.header-row {
+  background: #eef5f2;
+}
+
+.cell {
+  min-height: 38px;
+  padding: 8px;
+  color: #26342f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.label-cell {
+  width: 92px;
+  flex: 0 0 auto;
+  color: #66756f;
+  font-weight: 800;
+}
+
+.product-cell {
+  width: 140px;
+  flex: 0 0 auto;
+  border-left: 1px solid #e3e9e6;
+}
+</style>

@@ -89,6 +89,9 @@ Plan 包含：
 - `boundary_reason`
 - `needs_clarification`
 - `clarification_reason`
+- `multi_need`
+- `clarify_needed`
+- `clarify_dimensions`
 - `scope`
 - `target_refs`
 - `focus`
@@ -104,7 +107,10 @@ Validator 负责：
 - 防止 LLM 生成不存在的类目和商品类型。
 - 防止 LLM 凭空添加预算和排除词。
 - 防止 LLM 漏判 `out_of_scope / multi_need / missing_context`。
+- 防止 LLM 输出未注册的澄清维度；`clarify_dimensions` 只能使用受控枚举。
 - 防止序号指向不存在的候选。
+
+主动追问不是直接相信模型文案。LLM 只判断“是否值得先追问”和“优先按哪个维度追问”；后端会结合真实候选商品差异生成最终 `clarify` 卡片。这样可以减少正则补丁，同时仍保证商品事实不越过 RAG 边界。
 
 ## 5. 记忆层：多需求结构化状态
 
@@ -195,5 +201,4 @@ Validator 负责：
 - 关键边界保留规则兜底。
 - 对比、指代、预算等高风险链路优先保证卡片一致性。
 
-这样做的好处是稳定、可测、适合比赛 Demo；代价是有些边界还需要规则补充，后续可以继续把更多边界判断前移到 LLM planner，再由 Validator 做最终验收。
-
+这样做的好处是稳定、可测、适合简历项目演示；代价是有些边界还需要规则补充，后续可以继续把更多边界判断前移到 LLM planner，再由 Validator 做最终验收。

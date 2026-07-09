@@ -1,45 +1,21 @@
 # 文档导航
 
-本目录按“最终提交、技术参考、运行验收、质量记录、原始材料”整理。评审或提交时优先看 `submission/`，日常开发再查其他目录。
+这里保留当前项目主线需要的说明：跨端前端、Node RAG 后端、Agent 编排、运行验证和质量记录。旧课程/比赛提交材料已经移除，避免和秋招项目定位混在一起。
 
-## 最终提交材料
+## 推荐阅读顺序
 
-| 文档 | 用途 |
-| --- | --- |
-| [submission/README.md](submission/README.md) | 最终提交材料索引 |
-| [submission/design-document.md](submission/design-document.md) | 设计文档：架构、技术栈、关键方案 |
-| [submission/usage-guide.md](submission/usage-guide.md) | 说明文档：部署、体验、评审验证 |
-| [submission/highlights.md](submission/highlights.md) | 项目亮点与创新点 |
-| [submission/demo-video-script.md](submission/demo-video-script.md) | 5-10 分钟演示视频脚本 |
+1. [代码导读](code-walkthrough.md)：先看整体模块和关键文件，适合后续学习和改代码前快速回忆。
+2. [项目转型方向](project-background-requirements.md)：说明为什么当前主线从 Android 转到跨端前端 + RAG Agent。
+3. [跨端前端计划](frontend-web-plan.md)：`app/` 一套代码覆盖 H5/微信小程序。
+4. [系统架构](reference/architecture.md)：前端、后端、数据集、向量库和模型之间如何协作。
+5. [Agent 编排](reference/agent-orchestration.md)：Planner、Validator、多轮记忆、主动追问和 RAG 边界。
+6. [API 文档](reference/api.md)：后端 HTTP/SSE 协议。
+7. [Qdrant 配置](operations/qdrant.md)：向量库启动、入库和验证。
+8. [验收清单](operations/demo-checklist.md)：本地演示前的检查步骤。
+9. [进度记录](quality/progress.md)：已完成能力和验证记录。
 
-## 技术参考
+## 文档维护原则
 
-| 文档 | 用途 |
-| --- | --- |
-| [reference/architecture.md](reference/architecture.md) | 系统架构、模块职责、端到端数据流 |
-| [reference/api.md](reference/api.md) | 后端 API、SSE 事件、调试接口 |
-| [reference/rag-pipeline.md](reference/rag-pipeline.md) | RAG 检索、过滤、生成链路 |
-| [reference/agent-orchestration.md](reference/agent-orchestration.md) | Agent 编排、意图解析、Validator 和多轮状态 |
-| [reference/boundary-handling.md](reference/boundary-handling.md) | 边界场景：缺少上下文、越界请求、多需求 |
-| [reference/review-mode.md](reference/review-mode.md) | 评审模式证据链说明 |
-
-## 运行与验收
-
-| 文档 | 用途 |
-| --- | --- |
-| [operations/demo-checklist.md](operations/demo-checklist.md) | Demo 启动、验收问题集、常见问题 |
-| [operations/qdrant.md](operations/qdrant.md) | Qdrant 本地配置、写入和验证 |
-
-## 质量记录
-
-| 文档 | 用途 |
-| --- | --- |
-| [quality/progress.md](quality/progress.md) | 项目完成情况、风险和测试覆盖 |
-| [quality/rag-retrieval-evaluation.md](quality/rag-retrieval-evaluation.md) | RAG 检索评测说明和结果 |
-
-## 原始材料
-
-| 文档 | 用途 |
-| --- | --- |
-| [project-background-requirements.md](project-background-requirements.md) | 项目转型方向：面向秋招简历的 Web 全栈 Agent 项目 |
-| [archive/project-requirements.md](archive/project-requirements.md) | 早期项目要求草稿，保留作历史参考 |
+- 新功能完成后，同步更新对应计划或进度记录。
+- 文档只写当前主线，历史 Android 或课程内容仅在必要背景中一笔带过。
+- 涉及 API Key、`.env`、本地数据库路径的内容只写占位示例，不写真实值。

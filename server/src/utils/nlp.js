@@ -71,7 +71,33 @@ export const CATEGORY_HINTS = [
   },
   {
     category: "服饰运动",
-    words: ["跑鞋", "跑步鞋", "篮球鞋", "徒步鞋", "运动", "外套", "穿搭", "衣服", "鞋", "服饰", "轻量", "背包", "通勤包", "速干", "短袖", "T恤"]
+    words: [
+      "跑鞋",
+      "跑步鞋",
+      "篮球鞋",
+      "徒步鞋",
+      "运动",
+      "上衣",
+      "卫衣",
+      "外套",
+      "穿搭",
+      "衣服",
+      "鞋",
+      "运动裤",
+      "短裤",
+      "长裤",
+      "裤子",
+      "帽子",
+      "棒球帽",
+      "鸭舌帽",
+      "服饰",
+      "轻量",
+      "背包",
+      "通勤包",
+      "速干",
+      "短袖",
+      "T恤"
+    ]
   },
   {
     category: "食品饮料",
@@ -96,7 +122,11 @@ export const ITEM_INTENTS = [
   { itemType: "徒步鞋", trigger: ["徒步鞋"], terms: ["徒步鞋", "户外鞋"] },
   { itemType: "鞋", trigger: ["鞋"], terms: ["跑步鞋", "跑鞋", "篮球鞋", "徒步鞋", "鞋"] },
   { itemType: "背包", trigger: ["背包", "通勤包", "双肩包"], terms: ["背包", "双肩包", "通勤包"] },
+  { itemType: "卫衣", trigger: ["卫衣"], terms: ["卫衣"] },
+  { itemType: "上衣", trigger: ["上衣", "衣服", "卫衣", "短袖", "T恤"], terms: ["上衣", "卫衣", "短袖T恤", "速干T恤", "训练短袖"] },
   { itemType: "速干T恤", trigger: ["速干短袖", "速干T恤", "跑步训练"], terms: ["速干T恤", "短袖T恤", "训练短袖"] },
+  { itemType: "运动裤", trigger: ["运动裤", "短裤", "长裤", "裤子", "训练裤"], terms: ["运动短裤", "运动长裤", "训练裤", "休闲收口裤"] },
+  { itemType: "帽子", trigger: ["帽子", "棒球帽", "鸭舌帽", "遮阳帽"], terms: ["帽子", "棒球帽", "鸭舌帽", "遮阳帽"] },
   { itemType: "饮料", trigger: ["饮料", "无糖饮料", "茶饮", "气泡水"], terms: ["饮料", "茶饮", "气泡水", "功能饮料", "碳酸饮料"] },
   { itemType: "功能饮料", trigger: ["功能饮料", "补充能量"], terms: ["功能饮料", "维生素功能饮料", "能量"] },
   { itemType: "咖啡", trigger: ["咖啡"], terms: ["咖啡"] },
@@ -232,6 +262,10 @@ export function extractNegativeTerms(message) {
 }
 
 export function inferCategory(message) {
+  if (hasClothingContext(message) && hasSunProtectionAsClothingFeature(message)) {
+    return "服饰运动";
+  }
+
   let best = null;
   for (const item of CATEGORY_HINTS) {
     const matchedWords = item.words.filter((word) => message.includes(word));
@@ -246,6 +280,11 @@ export function inferCategory(message) {
 }
 
 export function inferItemIntent(message) {
+  if (hasClothingContext(message) && hasSunProtectionAsClothingFeature(message)) {
+    const clothingIntent = ITEM_INTENTS.find((item) => item.itemType === "上衣");
+    if (clothingIntent) return clothingIntent;
+  }
+
   const matches = ITEM_INTENTS
     .map((item) => {
       const matchedTrigger = item.trigger.filter((word) => message.includes(word)).sort((a, b) => b.length - a.length)[0];
@@ -256,6 +295,14 @@ export function inferItemIntent(message) {
 
   // 优先选择更具体的触发词，例如“平板电脑”应优先于泛化的“电脑”。
   return matches[0]?.item || null;
+}
+
+export function hasClothingContext(message) {
+  return /(上衣|衣服|服饰|穿搭|卫衣|短袖|T恤|外套|运动裤|裤子|帽子|鞋|背包)/.test(message);
+}
+
+export function hasSunProtectionAsClothingFeature(message) {
+  return /防晒/.test(message) && !/(防晒霜|防晒乳|防晒喷雾|防晒产品|防晒护肤)/.test(message);
 }
 
 export function extractPreferences(message) {

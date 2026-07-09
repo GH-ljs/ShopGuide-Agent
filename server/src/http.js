@@ -9,6 +9,7 @@ import { buildError, ERROR_CODES } from "./utils/errors.js";
 import { streamModelAnswer } from "./services/llm.js";
 import { parseTurnIntent } from "./services/intent.js";
 import { buildHotQueryCacheKey, createHotQueryCache } from "./services/hotCache.js";
+import { buildClarifyPayload } from "./services/clarify.js";
 import {
   appendTurn,
   buildActiveNeedMemorySummary,
@@ -172,6 +173,278 @@ function alignRetrievalDebugToAnswerProducts(debug = {}, answerProducts = []) {
   };
 }
 
+async function buildChatOncePayload({ body, config, products, vectorIndex }) {
+  const message = String(body.message || "").trim();
+  if (!message) {
+    throw Object.assign(new Error("message is required"), {
+      code: ERROR_CODES.VALIDATION_ERROR,
+      userMessage: "message 不能为空"
+    });
+  }
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    throw Object.assign(new Error("message is too long"), {
+      code: ERROR_CODES.VALIDATION_ERROR,
+      userMessage: `需求描述太长，请控制在 ${MAX_MESSAGE_LENGTH} 字以内`
+    });
+  }
+
+  const conversationId = String(body.conversationId || "default").trim() || "default";
+  const deviceId = resolveRequestDeviceId(body);
+  const productLimit = resolveChatProductLimit(body.limit);
+  const session = getSession(conversationId, deviceId);
+  restoreSessionFromHistory(session, body.history, products);
+
+  const turnIntent = await parseTurnIntent(config, session, message);
+  if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
+    const answerText = buildMultiNeedAnswer();
+    const review = buildBoundaryReviewTrace({
+      message,
+      turnIntent,
+      retrievalScope: "multi_need",
+      totalProducts: products.length,
+      note: "multi-need input is clarified before retrieval so unrelated product categories are not mixed into one card set"
+    });
+    appendTurn(session, "user", message);
+    appendTurn(session, "assistant", answerText);
+    persistSession(session);
+    return {
+      ok: true,
+      conversationId,
+      deviceId,
+      answer: answerText,
+      products: [],
+      comparison: null,
+      review,
+      meta: [{ type: "boundary", boundary: "multi_need" }]
+    };
+  }
+
+  if (turnIntent.type === TURN_INTENTS.OUT_OF_SCOPE) {
+    const answerText = buildOutOfScopeAnswer(message);
+    const review = buildBoundaryReviewTrace({
+      message,
+      turnIntent,
+      retrievalScope: "out_of_scope",
+      totalProducts: products.length,
+      note: "out-of-scope input is blocked before retrieval so non-shopping questions do not pollute product memory"
+    });
+    appendTurn(session, "user", message);
+    appendTurn(session, "assistant", answerText);
+    persistSession(session);
+    return {
+      ok: true,
+      conversationId,
+      deviceId,
+      answer: answerText,
+      products: [],
+      comparison: null,
+      review,
+      meta: [{ type: "boundary", boundary: "out_of_scope" }]
+    };
+  }
+
+  if (turnIntent.type === TURN_INTENTS.MISSING_CONTEXT) {
+    const answerText = buildMissingContextAnswer(message);
+    updateSessionState(session, message, turnIntent.parsed);
+    const review = buildBoundaryReviewTrace({
+      message,
+      turnIntent,
+      retrievalScope: "missing_context",
+      totalProducts: products.length,
+      note: "reference/compare request has no usable candidate context, so full-catalog retrieval is intentionally skipped"
+    });
+    appendTurn(session, "user", message);
+    appendTurn(session, "assistant", answerText);
+    persistSession(session);
+    return {
+      ok: true,
+      conversationId,
+      deviceId,
+      answer: answerText,
+      products: [],
+      comparison: null,
+      review,
+      meta: [{ type: "boundary", boundary: "missing_context" }]
+    };
+  }
+
+  const clarify = buildClarifyPayload(message, turnIntent, products);
+  if (clarify) {
+    const answerText = "可以，我先帮你把需求收窄一点，这样推荐会更准。";
+    const review = buildBoundaryReviewTrace({
+      message,
+      turnIntent,
+      retrievalScope: "clarify",
+      totalProducts: products.length,
+      note: "broad shopping request is clarified before retrieval so the candidate set can be narrowed by user intent"
+    });
+    appendTurn(session, "user", message);
+    appendTurn(session, "assistant", answerText);
+    persistSession(session);
+    return {
+      ok: true,
+      conversationId,
+      deviceId,
+      answer: answerText,
+      products: [],
+      comparison: null,
+      clarify,
+      review,
+      meta: [{ type: "clarify" }]
+    };
+  }
+
+  if (turnIntent.type === TURN_INTENTS.NEW_SEARCH) {
+    resetSessionStateForNewSearch(session);
+  } else {
+    selectNeedForTurn(session, turnIntent);
+  }
+
+  // chat/once keeps the same RAG trust boundary as the SSE endpoint: retrieval,
+  // answer text, comparison payload and cards all come from one candidate set.
+  const state = updateSessionState(session, message, turnIntent.parsed);
+  const answerState = {
+    ...state,
+    memorySummary: buildActiveNeedMemorySummary(session)
+  };
+  const history = getRecentTurns(session);
+  const hasAnswerPriceBoundary = Number.isFinite(state.maxPrice) || Number.isFinite(state.minPrice);
+  const answerHistory = turnIntent.type === TURN_INTENTS.NEW_SEARCH || hasAnswerPriceBoundary ? [] : history;
+  const retrievalQuery = buildRetrievalQuery(session, message, {
+    includeHistory: turnIntent.type !== TURN_INTENTS.NEW_SEARCH,
+    includeProducts: turnIntent.type !== TURN_INTENTS.NEW_SEARCH
+  });
+  const retrievalProducts =
+    turnIntent.type === TURN_INTENTS.COMPARE
+      ? resolveComparisonProducts(session, message)
+      : turnIntent.type === TURN_INTENTS.REFER
+        ? resolveReferencedProducts(session, message)
+        : products;
+
+  let retrievalDebug = null;
+  let matchedProducts;
+  if (turnIntent.type === TURN_INTENTS.COMPARE) {
+    matchedProducts = retrievalProducts.slice(0, productLimit);
+    retrievalDebug = {
+      products: matchedProducts,
+      counts: {
+        totalProducts: products.length,
+        filteredCandidates: retrievalProducts.length,
+        returned: matchedProducts.length,
+        finalProducts: matchedProducts.length
+      },
+      parsed: parsedRetrievalInput(turnIntent),
+      usedVectorStore: false,
+      finalSelection: matchedProducts.map((product) => ({
+        productId: product.productId,
+        title: product.title,
+        brand: product.brand,
+        price: product.basePrice,
+        category: product.category,
+        subCategory: product.subCategory,
+        score: null,
+        rankScore: null,
+        preferenceHits: [],
+        reason: "compare intent reuses referenced candidates instead of full-catalog retrieval"
+      }))
+    };
+  } else {
+    try {
+      retrievalDebug = await retrieveProductsWithDebug(
+        retrievalProducts,
+        retrievalQuery,
+        state,
+        productLimit,
+        vectorIndex,
+        parsedRetrievalInput(turnIntent)
+      );
+      matchedProducts = retrievalDebug.products;
+    } catch (error) {
+      throw Object.assign(new Error(error.message), {
+        code: ERROR_CODES.RETRIEVAL_ERROR,
+        userMessage: "商品检索暂时不可用"
+      });
+    }
+  }
+
+  const answerMode =
+    turnIntent.type === TURN_INTENTS.COMPARE ? "compare" : turnIntent.type === TURN_INTENTS.REFER ? "refer" : "";
+  const answerProducts = applyFinalProductBoundaries(matchedProducts, state).slice(0, productLimit);
+  const answerDebug = alignRetrievalDebugToAnswerProducts(retrievalDebug, answerProducts);
+  const finalAnswerState = { ...answerState, answerMode };
+  const review = buildReviewTrace({
+    message,
+    turnIntent,
+    retrievalScope:
+      turnIntent.type === TURN_INTENTS.COMPARE
+        ? "comparison_candidates"
+        : turnIntent.type === TURN_INTENTS.REFER
+          ? "last_products"
+          : "full_catalog",
+    retrievalQuery,
+    state,
+    debug: answerDebug,
+    products: answerProducts,
+    totalProducts: products.length,
+    note: "chat/once returns the same candidate set for answer text, cards and comparison payload"
+  });
+
+  let answerText = "";
+  let fallbackUsed = false;
+  let fallbackReason = "";
+  let fallbackMessage = "";
+  const useModelForOnce = body.useModel === true && !shouldUseDeterministicAnswer(config, turnIntent, state, message);
+  if (useModelForOnce) {
+    try {
+      for await (const token of streamModelAnswer(config, message, answerProducts, answerHistory, finalAnswerState)) {
+        answerText += token;
+      }
+    } catch (error) {
+      fallbackUsed = true;
+      fallbackReason = ERROR_CODES.MODEL_ERROR;
+      fallbackMessage = "当前 AI 生成服务暂时不可用，已使用本地导购规则完成推荐。";
+      console.warn("[/api/chat/once] model generation failed, fallback to local answer:", error.message);
+      answerText = buildLocalAnswer(message, answerProducts, answerHistory, finalAnswerState);
+    }
+  } else {
+    // chat/once is the cross-platform stable path for H5 and Mini Program.
+    // It returns after retrieval and local answer assembly instead of waiting
+    // for a full model response, so the UI will not stay in loading when the
+    // external model is slow. The SSE debug endpoint still keeps model streaming.
+    answerText = buildLocalAnswer(message, answerProducts, answerHistory, finalAnswerState);
+  }
+
+  appendTurn(session, "user", message);
+  appendTurn(session, "assistant", answerText);
+  rememberProducts(session, answerProducts, {
+    updateReference: turnIntent.type !== TURN_INTENTS.REFER && turnIntent.type !== TURN_INTENTS.COMPARE,
+    updateComparison: turnIntent.type === TURN_INTENTS.COMPARE
+  });
+  persistSession(session);
+
+  return {
+    ok: true,
+    conversationId,
+    deviceId,
+    answer: answerText,
+    products: buildProductCards(answerProducts),
+    comparison: buildComparisonPayload(message, answerProducts, finalAnswerState),
+    review,
+    meta: [
+      {
+        type: "once",
+        answerSource: useModelForOnce && !fallbackUsed ? "model" : "local",
+        fallback: fallbackUsed,
+        fallbackReason,
+        fallbackMessage
+      }
+    ],
+    fallback: fallbackUsed,
+    fallbackReason,
+    fallbackMessage
+  };
+}
+
 function sendImageFile(res, filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
     sendJson(res, 404, buildError(ERROR_CODES.NOT_FOUND, "商品图片不存在"));
@@ -223,7 +496,10 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
     restoreSessionFromHistory(session, body.history, products);
     const ruleIntent = classifyTurnIntent(session, message);
-    const canTryHotCache = config.hotQueryCacheEnabled && ruleIntent.type === TURN_INTENTS.NEW_SEARCH;
+    const canTryHotCache =
+      config.hotQueryCacheEnabled &&
+      ruleIntent.type === TURN_INTENTS.NEW_SEARCH &&
+      !buildClarifyPayload(message, ruleIntent, products);
     const preParseCacheKey = canTryHotCache
       ? buildHotQueryCacheKey({ turnIntent: ruleIntent, state: {}, message, limit: productLimit })
       : "";
@@ -349,6 +625,32 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
         conversationId,
         deviceId,
         missingContext: true
+      });
+      return;
+    }
+    const clarify = buildClarifyPayload(message, turnIntent, products);
+    if (clarify) {
+      const answerText = "可以，我先帮你把需求收窄一点，这样推荐会更准。";
+      const review = buildBoundaryReviewTrace({
+        message,
+        turnIntent,
+        retrievalScope: "clarify",
+        totalProducts: products.length,
+        note: "broad shopping request is clarified before retrieval so the candidate set can be narrowed by user intent"
+      });
+
+      await streamText(res, answerText, () => markFirstToken({ cacheHit: false, clarify: true }));
+      appendTurn(session, "user", message);
+      appendTurn(session, "assistant", answerText);
+      persistSession(session);
+      writeSse(res, "clarify", { clarify });
+      writeSse(res, "review", { review });
+      writeSse(res, "products", { products: [] });
+      writeSse(res, "done", {
+        ok: true,
+        conversationId,
+        deviceId,
+        clarify: true
       });
       return;
     }
@@ -822,6 +1124,20 @@ function installRoutes(app, { config, products, vectorIndex }) {
       });
     } catch (error) {
       return next(error);
+    }
+  });
+
+  app.post("/api/chat/once", async (req, res, next) => {
+    try {
+      // Mini Program and H5 share this JSON endpoint first. SSE stays in
+      // /api/chat for the Web debug console because Mini Program streaming
+      // compatibility needs separate adaptation.
+      const payload = await buildChatOncePayload({ body: req.body || {}, config, products, vectorIndex });
+      sendJson(res, 200, payload);
+    } catch (error) {
+      const code = error.code || ERROR_CODES.INTERNAL_ERROR;
+      const message = error.userMessage || "服务内部错误";
+      sendJson(res, code === ERROR_CODES.VALIDATION_ERROR ? 400 : 500, buildError(code, message, error.message));
     }
   });
 

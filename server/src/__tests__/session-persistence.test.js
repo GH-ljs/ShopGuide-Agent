@@ -65,8 +65,28 @@ async function debugRetrieve(baseUrl, payload) {
   return response.json();
 }
 
+function createTempRoot() {
+  const candidates = [
+    os.tmpdir(),
+    process.env.TEMP,
+    process.env.TMP,
+    path.join(process.cwd(), ".tmp")
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      fs.mkdirSync(candidate, { recursive: true });
+      return candidate;
+    } catch {
+      // Try the next candidate; some Windows shells keep a stale TEMP path.
+    }
+  }
+
+  throw new Error("No writable temp directory is available for session persistence test");
+}
+
 async function run() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shopguide-session-"));
+  const tmpDir = fs.mkdtempSync(path.join(createTempRoot(), "shopguide-session-"));
   const sessionStorePath = path.join(tmpDir, "sessions.db");
   let server;
   let baseUrl;

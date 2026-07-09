@@ -8,6 +8,7 @@ import { classifyTurnIntent, snapshotSession, TURN_INTENTS } from "./memory.js";
 const VALID_TURN_TYPES = new Set(Object.values(TURN_INTENTS));
 const VALID_CATEGORIES = new Set(CATEGORY_HINTS.map((item) => item.category));
 const VALID_SCOPES = new Set(["full_catalog", "current_need", "last_products", "last_compared_products", "referenced_products"]);
+const VALID_CLARIFY_DIMENSIONS = new Set(["scenario", "preference", "budget", "skin_scenario", "beverage_scenario", "clothing_scenario", "digital_scenario", "price"]);
 const BOUNDARY_TURN_TYPES = new Set([TURN_INTENTS.MISSING_CONTEXT, TURN_INTENTS.OUT_OF_SCOPE, TURN_INTENTS.MULTI_NEED]);
 
 function normalizeString(value) {
@@ -30,6 +31,14 @@ function normalizeNumberArray(value) {
   return value
     .map((item) => Number(item))
     .filter((item) => Number.isInteger(item) && item > 0);
+}
+
+function normalizeBoolean(value) {
+  return typeof value === "boolean" ? value : null;
+}
+
+function normalizeClarifyDimensions(value) {
+  return normalizeStringArray(value).filter((item) => VALID_CLARIFY_DIMENSIONS.has(item));
 }
 
 function filterCurrentTurnPreferences(modelPreferences, fallbackPreferences, message) {
@@ -96,10 +105,12 @@ function buildIntentParserMessages(session, message, fallbackIntent) {
         "你还要判断这句话是否仍属于商品导购边界：外卖/订餐服务、天气、写论文、写代码等不是商品库导购；一句话同时要两个无关品类时需要先澄清。",
         "你只负责解析和规划，不负责推荐商品；商品是否符合条件必须交给后端检索和硬过滤。",
         "字段：turn_type 只能是 new_search/refine/refer/compare/missing_context/out_of_scope/multi_need；category、item_type 使用已有商品库里的中文类目和商品类型；price_direction 只能是 lower/higher/none。",
+        "multi_need 是语义判断：只有用户确实同时要多个商品需求时才为 true；像“防晒防风上衣”里的防晒是服饰功能偏好，不是防晒霜需求。",
+        "clarify_needed 表示用户购物需求太宽泛、先追问会显著提升推荐准确性；clarify_dimensions 只能从 scenario/preference/budget/skin_scenario/beverage_scenario/clothing_scenario/digital_scenario/price 中选择。",
         "scope 只能是 full_catalog/current_need/last_products/last_compared_products/referenced_products；target_refs 是用户明确提到的候选序号，如“2和5”输出 [2,5]。",
         "如果用户只是问第几款或刚才那款，turn_type=refer；如果在比较当前候选的区别、优缺点、哪个更适合，turn_type=compare；如果换了新品类或新商品类型，turn_type=new_search；如果在上一轮需求上加预算、偏好、排除条件，turn_type=refine。",
         "如果没有候选商品却直接问“第二款怎么样/2和3哪个好”，turn_type=missing_context；如果是外卖、天气、论文、代码等非商品导购，turn_type=out_of_scope；如果同时要多个商品品类，turn_type=multi_need。",
-        "输出 JSON 结构：{\"turn_type\":\"refine\",\"is_shopping_guidance\":true,\"boundary_reason\":\"\",\"needs_clarification\":false,\"clarification_reason\":\"\",\"scope\":\"current_need\",\"target_refs\":[],\"focus\":[],\"category\":\"\",\"item_type\":\"\",\"max_price\":null,\"min_price\":null,\"price_direction\":\"none\",\"negative_terms\":[],\"preferences\":[],\"reason\":\"\"}"
+        "输出 JSON 结构：{\"turn_type\":\"refine\",\"is_shopping_guidance\":true,\"multi_need\":false,\"boundary_reason\":\"\",\"needs_clarification\":false,\"clarify_needed\":false,\"clarify_dimensions\":[],\"clarification_reason\":\"\",\"scope\":\"current_need\",\"target_refs\":[],\"focus\":[],\"category\":\"\",\"item_type\":\"\",\"max_price\":null,\"min_price\":null,\"price_direction\":\"none\",\"negative_terms\":[],\"preferences\":[],\"reason\":\"\"}"
       ].join("\n")
     },
     {
@@ -116,7 +127,8 @@ function buildIntentParserMessages(session, message, fallbackIntent) {
             max_price: fallbackIntent.parsed.price?.maxPrice ?? null,
             min_price: fallbackIntent.parsed.price?.minPrice ?? null,
             negative_terms: fallbackIntent.parsed.negativeTerms || [],
-            preferences: fallbackIntent.parsed.preferences || []
+            preferences: fallbackIntent.parsed.preferences || [],
+            multi_need: fallbackIntent.type === TURN_INTENTS.MULTI_NEED
           }
         },
         null,
@@ -131,10 +143,14 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
   const referenceProducts = session.referenceProducts?.length ? session.referenceProducts : session.lastProducts;
   const rawTurnType = rawPlan?.turn_type || rawPlan?.intent;
   const modelTurnType = VALID_TURN_TYPES.has(rawTurnType) ? rawTurnType : fallbackIntent.type;
+  const modelMultiNeed = normalizeBoolean(rawPlan?.multi_need);
+  const modelSaysSingleNeed = modelMultiNeed === false && [TURN_INTENTS.NEW_SEARCH, TURN_INTENTS.REFINE].includes(modelTurnType);
   const turnType =
     fallbackIntent.type === TURN_INTENTS.REFER
       ? TURN_INTENTS.REFER
-      : isBoundaryTurnType(fallbackIntent.type) && modelTurnType !== fallbackIntent.type
+      : fallbackIntent.type === TURN_INTENTS.MULTI_NEED && modelSaysSingleNeed
+        ? modelTurnType
+        : isBoundaryTurnType(fallbackIntent.type) && modelTurnType !== fallbackIntent.type
         ? fallbackIntent.type
         : modelTurnType;
   // 规则层已经识别出的 compare/new_search，以及“50预算”这类明确价格约束，属于会话边界判断，
@@ -163,6 +179,11 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
     fallbackPreferences,
     message
   );
+  const clarifyNeeded =
+    normalizeBoolean(rawPlan?.clarify_needed) ??
+    normalizeBoolean(rawPlan?.needs_clarification) ??
+    false;
+  const clarifyDimensions = normalizeClarifyDimensions(rawPlan?.clarify_dimensions ?? rawPlan?.clarification_dimensions);
   const focus = normalizeStringArray(rawPlan?.focus);
   const targetRefs = normalizeNumberArray(rawPlan?.target_refs).filter((index) => index <= referenceProducts.length);
   const requestedScope = normalizeString(rawPlan?.scope);
@@ -207,7 +228,13 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
       isShoppingGuidance:
         protectedTurnType === TURN_INTENTS.OUT_OF_SCOPE ? false : typeof rawPlan?.is_shopping_guidance === "boolean" ? rawPlan.is_shopping_guidance : true,
       boundaryReason: normalizeString(rawPlan?.boundary_reason),
-      needsClarification: protectedTurnType === TURN_INTENTS.MULTI_NEED || Boolean(rawPlan?.needs_clarification),
+      multiNeed: protectedTurnType === TURN_INTENTS.MULTI_NEED,
+      needsClarification: protectedTurnType === TURN_INTENTS.MULTI_NEED || clarifyNeeded,
+      clarify: {
+        needed: protectedTurnType === TURN_INTENTS.MULTI_NEED ? false : clarifyNeeded,
+        dimensions: clarifyDimensions,
+        reason: normalizeString(rawPlan?.clarification_reason)
+      },
       clarificationReason: normalizeString(rawPlan?.clarification_reason),
       validator: {
         priceAccepted: canUseModelPrice,
@@ -215,6 +242,8 @@ function mergeModelIntent(modelJson, fallbackIntent, message, session) {
         fallbackType: fallbackIntent.type,
         modelType: modelTurnType,
         boundaryFallbackApplied: isBoundaryTurnType(fallbackIntent.type) && modelTurnType !== fallbackIntent.type,
+        multiNeedAccepted: modelMultiNeed,
+        clarifyDimensionsAccepted: clarifyDimensions.length,
         softPreferencesAccepted: modelPreferences.length,
         targetRefsAccepted: targetRefs.length === normalizeNumberArray(rawPlan?.target_refs).length
       }

@@ -1,0 +1,34 @@
+{
+  "pages": [
+    {
+      "path": "pages/chat/index",
+      "style": {
+        "navigationStyle": "custom",
+        "navigationBarTitleText": "ShopGuide",
+        "navigationBarBackgroundColor": "#f8faf9",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/product-detail/index",
+      "style": {
+        "navigationBarTitleText": "商品详情",
+        "navigationBarBackgroundColor": "#f8faf9",
+        "navigationBarTextStyle": "black"
+      }
+    },
+    {
+      "path": "pages/checkout/index",
+      "style": {
+        "navigationBarTitleText": "确认订单",
+        "navigationBarBackgroundColor": "#f8faf9",
+        "navigationBarTextStyle": "black"
+      }
+    }
+  ],
+  "globalStyle": {
+    "backgroundColor": "#eef2f1",
+    "navigationBarBackgroundColor": "#f8faf9",
+    "navigationBarTextStyle": "black"
+  }
+}
