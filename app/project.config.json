@@ -1,0 +1,13 @@
+{
+  "miniprogramRoot": "dist/weapp/",
+  "projectname": "ShopGuide-Agent",
+  "description": "Taro + React cross-platform shopping guide agent",
+  "appid": "touristappid",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": true
+  },
+  "compileType": "miniprogram"
+}

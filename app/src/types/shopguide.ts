@@ -37,7 +37,10 @@ export interface ComparisonPayload {
   }>;
   rows?: Array<{
     label: string;
-    values: Record<string, string>;
+    values: Array<{
+      productId: string;
+      value: string;
+    }>;
   }>;
 }
 
@@ -87,10 +90,12 @@ export interface ChatRequestPayload {
   conversationId: string;
   deviceId: string;
   history: Pick<ChatMessage, "role" | "content">[];
+  selectedProductIds?: string[];
 }
 
 export interface ChatTransportHandlers {
   onToken?: (token: string) => void;
+  onAnswerReset?: () => void;
   onAnswer?: (answer: string) => void;
   onProducts?: (products: ProductCard[]) => void;
   onComparison?: (comparison: ComparisonPayload | null) => void;

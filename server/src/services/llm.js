@@ -95,4 +95,16 @@ export async function* streamModelAnswer(config, message, products, history = []
       if (delta) yield delta;
     }
   }
+
+  // 个别兼容服务结束响应时不会在最后一个 data 行后补换行，刷新 decoder 并处理尾包，
+  // 避免完整生成的最后一个 token 被静默丢弃。
+  buffer += decoder.decode();
+  const trailing = buffer.trim();
+  if (trailing.startsWith("data:")) {
+    const payload = trailing.slice(5).trim();
+    if (payload && payload !== "[DONE]") {
+      const delta = parseStreamDelta(payload);
+      if (delta) yield delta;
+    }
+  }
 }

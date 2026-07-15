@@ -1,0 +1,152 @@
+.product-card {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #d8e0dd;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.product-image {
+  flex: 0 0 auto;
+  width: 86px;
+  height: 112px;
+  border-radius: 7px;
+  background: #f3f6f5;
+}
+
+.product-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #66756f;
+}
+
+.product-body {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 54px;
+}
+
+.product-brand {
+  color: #66756f;
+  font-size: 12px;
+}
+
+.product-title {
+  color: #1d252c;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.price {
+  color: #9a4b21;
+  font-weight: 800;
+}
+
+.detail-link {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  color: #17644f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.reason {
+  color: #586762;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 4px;
+}
+
+.action-button {
+  display: flex;
+  box-sizing: border-box;
+  width: auto;
+  height: 30px;
+  min-width: 0;
+  flex: 1 1 0;
+  margin: 0;
+  padding: 0 10px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #52615c;
+  border: 1px solid #d8e0dd;
+  background: #fff;
+  font-size: 12px;
+  line-height: 30px;
+  white-space: nowrap;
+}
+
+.action-button::after {
+  border: 0;
+}
+
+.action-button.active {
+  color: #9a4b21;
+  border-color: #e1c7b7;
+  background: #fff7f2;
+}
+
+.action-button.compare.selected {
+  color: #fff;
+  border-color: #395f8f;
+  background: #395f8f;
+}
+
+.action-button.primary {
+  color: #fff;
+  border-color: #1f7a63;
+  background: #1f7a63;
+}
+
+.action-button .button-text {
+  color: #52615c;
+}
+
+.action-button.active .button-text {
+  color: #9a4b21;
+}
+
+.action-button.compare.selected .button-text,
+.action-button.primary .button-text {
+  color: #fff;
+}
+
+@media (max-width: 520px) {
+  .product-card {
+    gap: 10px;
+  }
+
+  .product-image {
+    width: 72px;
+    height: 96px;
+  }
+
+  .product-body {
+    padding-right: 42px;
+  }
+
+  .actions {
+    gap: 6px;
+  }
+
+  .action-button {
+    padding: 0 6px;
+    font-size: 11px;
+  }
+}

@@ -47,7 +47,8 @@ export const config = {
   llmApiKey: llmProvider === "deepseek" ? deepseekApiKey : arkApiKey,
   arkBaseUrl: process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3",
   arkApiKey,
-  arkModel: process.env.ARK_MODEL || "ep-20260514111645-lmgt2",
+  // Ark endpoint 属于账号资源标识，必须由本地环境显式配置，不能把个人 endpoint 写进源码默认值。
+  arkModel: process.env.ARK_MODEL || "",
   deepseekApiKey,
   deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com",
   deepseekModel: process.env.DEEPSEEK_MODEL || "deepseek-chat",

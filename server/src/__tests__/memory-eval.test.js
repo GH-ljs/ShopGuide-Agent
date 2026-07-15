@@ -309,7 +309,8 @@ async function run() {
     results.push(
       await runCase("对比后偏好：更健康追问应沿用上一轮对比卡片", async () => {
         const conversationId = "memory-healthy-decision";
-        const setup = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        // “推荐无糖饮料”现在会先触发主动追问；专项记忆用例补充明确偏好后再建立候选集。
+        const setup = await chat(baseUrl, conversationId, "推荐无糖低卡饮料", 6);
         assert(setup.products.length >= 5, "healthy decision setup should keep at least five beverage candidates");
 
         const compared = await chat(baseUrl, conversationId, "比较2和5", 6);
@@ -341,7 +342,7 @@ async function run() {
     results.push(
       await runCase("对比后单品追问：再问哪款不那么甜仍沿用刚才对比范围", async () => {
         const conversationId = "memory-compare-after-refer-sweetness";
-        const setup = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        const setup = await chat(baseUrl, conversationId, "推荐无糖低卡饮料", 6);
         assert(setup.products.length >= 3, "sweetness setup should keep at least three beverage candidates");
 
         const compared = await chat(baseUrl, conversationId, "比较2和3", 6);
@@ -413,7 +414,7 @@ async function run() {
         const fresh = await chat(baseUrl, conversationId, "哪个更清爽", 6);
         assert(fresh.comparison?.columns?.length === 2, "freshness follow-up should compare sunscreen candidates first");
 
-        const beverages = await chat(baseUrl, conversationId, "推荐无糖饮料", 6);
+        const beverages = await chat(baseUrl, conversationId, "推荐无糖低卡饮料", 6);
         assert(beverages.products.length > 0, "new beverage need should return products");
         assert(beverages.products.every((product) => product.category === "食品饮料"), "new beverage need should switch category");
         assert(!beverages.comparison, "new beverage search should not emit comparison payload");

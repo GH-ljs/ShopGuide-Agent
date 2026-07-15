@@ -1,27 +1,27 @@
 # ShopGuide Agent
 
-ShopGuide Agent 是一个面向秋招简历展示的跨端智能导购项目。当前主线是 `uni-app + Vue3 + TypeScript` 前端，以及 `Node.js + RAG + Qdrant + Doubao Embedding + DeepSeek` 后端。
+ShopGuide Agent 是一个面向秋招简历展示的跨端智能导购项目。当前主线是 `Taro + React + TypeScript` 前端，以及 `Node.js + RAG + Qdrant + Doubao Embedding + DeepSeek` 后端。
 
-项目重点不是做一个普通商品搜索页，而是做一个可控的导购 Agent：LLM 负责理解和表达，后端负责意图校验、商品检索、事实边界和结构化卡片，避免推荐不存在的商品、价格、库存或功能。
+项目重点不是普通商品搜索页，而是一个可控的导购 Agent：LLM 负责理解和表达，后端负责意图校验、商品检索、事实边界和结构化卡片，避免推荐不存在的商品、价格、库存或功能。
 
 ## 技术栈
 
 | 模块 | 技术 |
 | --- | --- |
-| 跨端前端 | uni-app、Vue3、TypeScript、Vite |
-| H5 体验 | 流式文字、停止生成、智能滚动、会话列表、商品卡片 |
+| 跨端前端 | Taro、React、TypeScript、Zustand、SCSS |
+| H5 体验 | SSE 流式文字、停止生成、智能滚动、会话列表、商品卡片 |
 | 小程序路径 | 同一套 `app/` 代码构建微信小程序 |
 | 后端服务 | Node.js、Express |
 | Agent 编排 | LLM Planner + Validator、多轮记忆、主动追问、结构化对比 |
 | RAG 检索 | Qdrant、Doubao Embedding、本地检索兜底 |
 | 生成模型 | DeepSeek 流式生成、本地规则兜底 |
-| 本地状态 | 会话、收藏、购物车、订单模拟 |
+| 本地状态 | 会话、收藏、购物车、模拟订单 |
 
 ## 目录结构
 
 | 目录 | 说明 |
 | --- | --- |
-| `app/` | 当前唯一用户侧主前端，一套代码覆盖 H5 和微信小程序 |
+| `app/` | 当前用户侧主前端，一套 Taro/React 代码覆盖 H5 和微信小程序 |
 | `server/` | Node.js RAG 后端，负责意图、检索、生成和结构化返回 |
 | `ecommerce_agent_dataset/` | 商品 JSON 和图片，所有商品事实的来源 |
 | `docs/` | 架构、代码导读、运行、RAG 和质量记录 |
@@ -42,14 +42,6 @@ ShopGuide Agent 是一个面向秋招简历展示的跨端智能导购项目。�
 App H5:  http://127.0.0.1:5174
 Backend: http://localhost:3001
 Qdrant:  http://localhost:6333
-```
-
-也可以分开启动：
-
-```powershell
-.\scripts\start-qdrant.ps1
-.\scripts\start-backend.ps1
-.\scripts\start-all.ps1
 ```
 
 ## 前端开发
@@ -92,7 +84,7 @@ npm run build:mp-weixin
 ## 核心功能
 
 - 多轮导购问答：支持推荐、追问、预算收窄、商品指代和跨需求恢复。
-- 主动追问卡片：宽泛需求先问场景/偏好，例如“推荐上衣”会先问日常通勤、运动训练或户外防护。
+- 主动追问卡片：宽泛需求先问场景或偏好，例如“推荐上衣”会先问通勤、运动训练或户外防护。
 - 可信商品卡片：商品名、价格、图片、类目和详情都来自商品库，不从模型自然语言里反向解析。
 - 结构化商品对比：支持选择 2-3 款商品发起对比，由后端返回对比表和结论。
 - 购物闭环：收藏、购物车、SKU 选择、确认订单、模拟提交。
@@ -114,6 +106,7 @@ npm run test:smoke
 
 ```powershell
 cd app
+npm run typecheck
 npm run build:h5
 npm run build:mp-weixin
 ```
@@ -121,21 +114,23 @@ npm run build:mp-weixin
 ## 简历描述
 
 ```text
-ShopGuide Agent：基于 Vue3/TypeScript/uni-app 与 Node.js RAG 的跨端智能导购项目，支持 H5 与微信小程序。实现流式聊天、主动追问卡片、结构化商品推荐/对比、收藏购物车与订单模拟闭环；后端采用 LLM Planner + Validator 的受控 Agent 编排，结合 Qdrant 与 Doubao Embedding 完成商品召回，并用硬过滤保证回答、卡片和详情页均基于真实商品数据，降低模型幻觉。
+ShopGuide Agent：基于 Taro/React/TypeScript 与 Node.js RAG 的跨端智能导购项目，支持 H5 与微信小程序。实现流式聊天、主动追问卡片、结构化商品推荐/对比、收藏购物车与订单模拟闭环；后端采用 LLM Planner + Validator 的受控 Agent 编排，结合 Qdrant 与 Doubao Embedding 完成商品召回，并用硬过滤保证回答、卡片和详情页均基于真实商品数据，降低模型幻觉。
 ```
 
 短版：
 
 ```text
-跨端 RAG 导购 Agent：Vue3 + TypeScript + uni-app 前端，Node.js + Qdrant + Doubao Embedding 后端；实现流式问答、主动追问、结构化商品推荐/对比和购物车闭环，并通过 Planner/Validator 控制商品事实边界。
+跨端 RAG 导购 Agent：Taro + React + TypeScript 前端，Node.js + Qdrant + Doubao Embedding 后端；实现流式问答、主动追问、结构化商品推荐/对比和购物车闭环，并通过 Planner/Validator 控制商品事实边界。
 ```
 
 ## 文档入口
 
 - [代码导读](docs/code-walkthrough.md)
-- [跨端前端计划](docs/frontend-web-plan.md)
+- [项目学习路线](docs/learning-guide.md)
+- [前端说明](app/README.md)
 - [系统架构](docs/reference/architecture.md)
 - [Agent 编排](docs/reference/agent-orchestration.md)
+- [Agentic RAG 图式编排](docs/reference/agentic-rag-graph.md)
 - [API 文档](docs/reference/api.md)
 - [Qdrant 配置](docs/operations/qdrant.md)
 - [进度记录](docs/quality/progress.md)

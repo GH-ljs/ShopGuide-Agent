@@ -27,7 +27,45 @@ function summarizeProduct(product) {
   };
 }
 
-function collectFilterReasons(product, { itemIntent, maxPrice, minPrice, negativeTerms }) {
+function productEvidenceText(product) {
+  return [
+    product.title,
+    product.brand,
+    product.category,
+    product.subCategory,
+    product.searchableText
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function wantsSugarControl({ message, preferences = [], statePreferences = [] }) {
+  const text = `${message} ${preferences.join(" ")} ${statePreferences.join(" ")}`;
+  return /(无糖|0糖|零糖|低糖|低卡|控糖|减脂|怕胖)/.test(text);
+}
+
+function sugarControlMode({ message, preferences = [], statePreferences = [] }) {
+  const text = `${message} ${preferences.join(" ")} ${statePreferences.join(" ")}`;
+  if (/(无糖|0糖|零糖|不含糖|零添加糖)/.test(text)) return "sugar_free";
+  if (wantsSugarControl({ message, preferences, statePreferences })) return "low_sugar";
+  return "";
+}
+
+function shouldApplySugarControlFilter(product, { itemIntent, sugarControlMode }) {
+  if (!sugarControlMode) return false;
+  const scopeText = `${product.category} ${product.subCategory} ${itemIntent?.itemType || ""}`;
+  return /食品饮料|饮料|茶饮|气泡水|汽水|碳酸/.test(scopeText);
+}
+
+function hasSugarControlEvidence(product, mode) {
+  const evidence = productEvidenceText(product);
+  if (mode === "sugar_free") {
+    return /(无糖|0糖|零糖|不含糖|零添加糖)/.test(evidence);
+  }
+  return /(无糖|0糖|零糖|不含糖|零添加糖|0脂|0卡|低糖|低卡|控糖|减脂|怕胖|低负担|糖分控制)/.test(evidence);
+}
+
+function collectFilterReasons(product, { itemIntent, maxPrice, minPrice, negativeTerms, sugarControlMode }) {
   const reasons = [];
 
   if (!matchesItemIntent(product, itemIntent)) {
@@ -46,6 +84,10 @@ function collectFilterReasons(product, { itemIntent, maxPrice, minPrice, negativ
     if (term && product.searchableText.includes(term)) {
       reasons.push(`命中排除词：${term}`);
     }
+  }
+
+  if (shouldApplySugarControlFilter(product, { itemIntent, sugarControlMode }) && !hasSugarControlEvidence(product, sugarControlMode)) {
+    reasons.push(sugarControlMode === "sugar_free" ? "缺少无糖/0糖证据" : "缺少低糖/低负担证据");
   }
 
   return reasons;
@@ -151,11 +193,12 @@ export async function retrieveProductsWithDebug(
   const negativeTerms = [...(state.excludeTerms || []), ...(parsed?.negativeTerms || extractNegativeTerms(message))];
   const inferredCategory = state.category || parsed?.inferredCategory || inferCategory(message);
   const itemIntent = state.itemIntent || parsed?.itemIntent || inferItemIntent(message);
-  const preferences = extractPreferences(message);
+  const preferences = [...new Set([...(state.preferences || []), ...(parsed?.preferences || []), ...extractPreferences(message)])];
   const maxPrice = Number.isFinite(state.maxPrice) ? state.maxPrice : price.maxPrice;
   const minPrice = Number.isFinite(state.minPrice) ? state.minPrice : price.minPrice;
-  const constraints = { itemIntent, maxPrice, minPrice, negativeTerms };
-  const hasHardConstraint = Boolean(inferredCategory || itemIntent || maxPrice || minPrice || negativeTerms.length > 0);
+  const sugarMode = sugarControlMode({ message, preferences, statePreferences: state.preferences || [] });
+  const constraints = { itemIntent, maxPrice, minPrice, negativeTerms, sugarControlMode: sugarMode };
+  const hasHardConstraint = Boolean(inferredCategory || itemIntent || maxPrice || minPrice || negativeTerms.length > 0 || sugarMode);
 
   // 先按类目缩小范围，再做商品类型、预算、否定词过滤；这些是后端应当保证的“硬约束”，不能完全交给大模型自由判断。
   const categoryProducts = inferredCategory ? products.filter((product) => product.category === inferredCategory) : products;
@@ -175,7 +218,8 @@ export async function retrieveProductsWithDebug(
       maxPrice: maxPrice ?? null,
       minPrice: minPrice ?? null,
       negativeTerms,
-      preferences
+      preferences,
+      sugarControlMode: sugarMode
     },
     counts: {
       totalProducts: products.length,

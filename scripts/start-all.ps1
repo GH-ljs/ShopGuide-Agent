@@ -87,9 +87,9 @@ if (Test-Path $appDir) {
 
   if (!(Test-HttpOk "http://127.0.0.1:$AppPort")) {
     Write-Host "Starting app H5..."
-    Start-Process -FilePath $nodeExe -ArgumentList @($npmCli, "run", "dev:h5", "--", "--port", "$AppPort") -WorkingDirectory $appDir -WindowStyle Hidden
+    Start-Process -FilePath $nodeExe -ArgumentList @($npmCli, "run", "dev:h5") -WorkingDirectory $appDir -WindowStyle Hidden
   }
-  Wait-HttpOk "http://127.0.0.1:$AppPort" "App H5"
+  Wait-HttpOk "http://127.0.0.1:$AppPort" "App H5" 120
 }
 
 Write-Host ""

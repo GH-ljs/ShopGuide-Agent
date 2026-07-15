@@ -1,6 +1,7 @@
 // 文件职责：
 // 把一次导购请求中的意图、过滤、排序和商品证据整理成“评审模式”协议。
 // 这层不参与推荐决策，只负责把后端已经执行过的可信链路解释清楚，方便评委和开发者验证系统没有编造商品事实。
+import { buildAgentGraphTrace } from "../agent/graph.js";
 
 function toNumberOrNull(value) {
   return Number.isFinite(value) ? value : null;
@@ -74,7 +75,9 @@ export function buildReviewTrace({
   products = [],
   totalProducts = 0,
   note = "",
-  cacheHit = false
+  cacheHit = false,
+  clarify = null,
+  usedModel = false
 }) {
   const parsed = debug.parsed || {};
   const counts = debug.counts || {};
@@ -107,6 +110,13 @@ export function buildReviewTrace({
       finalSelection: debug.finalSelection || []
     },
     evidence: buildEvidence(safeProducts, debug.finalSelection || [], parsed),
+    graph: buildAgentGraphTrace({
+      turnIntent,
+      retrievalScope,
+      debug,
+      clarify,
+      usedModel
+    }),
     safety: [
       "回答文本、商品卡片和对比卡只能使用本轮返回的 products 候选集合。",
       "商品名、价格、图片、类目和详情字段来自商品库结构化数据。",

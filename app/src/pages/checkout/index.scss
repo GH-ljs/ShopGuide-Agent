@@ -1,0 +1,163 @@
+.checkout-page {
+  min-height: 100vh;
+  padding: 16px;
+  background: #eef2f1;
+}
+
+.checkout,
+.success {
+  display: flex;
+  max-width: 760px;
+  margin: 0 auto;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.page-title,
+.success-title {
+  color: #15231d;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.section-title {
+  color: #26342f;
+  font-weight: 800;
+}
+
+.empty,
+.order-item,
+.address-option,
+.success {
+  border: 1px solid #d8e0dd;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.empty {
+  padding: 14px;
+  color: #66756f;
+  font-size: 14px;
+}
+
+.order-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+
+.item-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.item-title {
+  color: #1d252c;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.item-sku,
+.item-meta,
+.summary-count,
+.success-text {
+  color: #66756f;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.item-total,
+.summary-total {
+  color: #9a4b21;
+  font-weight: 900;
+}
+
+.address-option {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 44px;
+  margin: 0;
+  padding: 12px;
+  align-items: center;
+  justify-content: flex-start;
+  color: #26342f;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.address-option::after,
+.primary-button::after {
+  border: 0;
+}
+
+.address-option .button-text {
+  color: #26342f;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+}
+
+.address-option.active {
+  border-color: #1d8068;
+  background: #e9f5f1;
+  font-weight: 800;
+}
+
+.footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 2px -16px -16px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #d7dfdc;
+  background: #f8faf9;
+}
+
+.summary {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.primary-button {
+  display: flex;
+  box-sizing: border-box;
+  width: 112px;
+  height: 38px;
+  margin: 0;
+  padding: 0 12px;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: #1f7a63;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 38px;
+}
+
+.primary-button .button-text {
+  color: #fff;
+}
+
+.primary-button[disabled] {
+  opacity: 0.55;
+}
+
+.success {
+  padding: 18px;
+}

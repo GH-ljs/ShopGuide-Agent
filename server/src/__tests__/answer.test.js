@@ -16,10 +16,13 @@ function run() {
   const cards = buildProductCards([first]);
   assert(cards[0].productId === first.productId, "product card should keep productId");
   assert(cards[0].imageUrl.includes(encodeURIComponent(first.productId)), "product card should expose imageUrl");
+  assert(!("imagePath" in cards[0]), "product card should not expose an absolute server path");
 
   const detail = buildProductDetail(first);
   assert(detail.officialFaq.length === first.officialFaq.length, "product detail should include FAQ evidence");
   assert(detail.userReviews.length === first.userReviews.length, "product detail should include review evidence");
+  assert(!("imagePath" in detail), "product detail should not expose an absolute server path");
+  assert(!("sourceFile" in detail), "product detail should not expose internal dataset paths");
 
   const emptyAnswer = buildLocalAnswer("防晒霜但不要含酒精", [], [], {
     category: "美妆护肤",

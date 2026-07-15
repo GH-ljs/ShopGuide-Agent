@@ -196,6 +196,7 @@ function activateNeed(session, need) {
 }
 
 export function configureSessionPersistence(options = {}) {
+  sessionStore.close?.();
   sessionStore = createSessionStore(options);
   return sessionStore;
 }
@@ -245,7 +246,8 @@ export function closeSessionPersistenceForTests() {
 export function getSessionPersistenceSnapshot() {
   return {
     type: sessionStore.type,
-    path: sessionStore.path
+    // 健康检查只需要暴露存储类型和文件名，绝对路径属于服务器内部实现细节。
+    file: sessionStore.path ? String(sessionStore.path).split(/[\\/]/).pop() : ""
   };
 }
 

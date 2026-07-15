@@ -52,7 +52,6 @@ export function shouldUseDeterministicAnswer(config, turnIntent, state, message)
   // 预算和价格方向属于后端可验证的硬约束，即使意图解析来自 LLM，也优先使用确定性回答。
   // 否则模型会看到历史里的“第二三款对比/哪个更清爽”，把已经正确过滤出的笔记本又写成旧对比追问。
   if (hasPriceBoundary || isPriceFollowUp) return true;
-  if (turnIntent.source === "llm") return false;
   return false;
 }
 
@@ -148,6 +147,20 @@ function findProduct(products, productId) {
   return products.find((item) => item.productId === productId);
 }
 
+function resolveSelectedProducts(products, selectedProductIds = []) {
+  const seen = new Set();
+  return selectedProductIds
+    .map((id) => String(id || "").trim())
+    .filter(Boolean)
+    .filter((id) => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((id) => findProduct(products, id))
+    .filter(Boolean);
+}
+
 function applyFinalProductBoundaries(products, state = {}) {
   // retriever 是主要过滤层，但对比/指代类请求可能直接复用历史候选，不一定重新进入全库检索。
   // 因此在生成回答和商品卡片前再做一次轻量边界校验，确保当前会话里的预算上下限不会被旧候选绕过。
@@ -194,7 +207,11 @@ async function buildChatOncePayload({ body, config, products, vectorIndex }) {
   const session = getSession(conversationId, deviceId);
   restoreSessionFromHistory(session, body.history, products);
 
-  const turnIntent = await parseTurnIntent(config, session, message);
+  let turnIntent = await parseTurnIntent(config, session, message);
+  const selectedProducts = resolveSelectedProducts(products, body.selectedProductIds);
+  if (selectedProducts.length >= 2) {
+    turnIntent = { ...turnIntent, type: TURN_INTENTS.COMPARE };
+  }
   if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
     const answerText = buildMultiNeedAnswer();
     const review = buildBoundaryReviewTrace({
@@ -316,7 +333,9 @@ async function buildChatOncePayload({ body, config, products, vectorIndex }) {
   });
   const retrievalProducts =
     turnIntent.type === TURN_INTENTS.COMPARE
-      ? resolveComparisonProducts(session, message)
+      ? selectedProducts.length >= 2
+        ? selectedProducts
+        : resolveComparisonProducts(session, message)
       : turnIntent.type === TURN_INTENTS.REFER
         ? resolveReferencedProducts(session, message)
         : products;
@@ -372,6 +391,7 @@ async function buildChatOncePayload({ body, config, products, vectorIndex }) {
   const answerProducts = applyFinalProductBoundaries(matchedProducts, state).slice(0, productLimit);
   const answerDebug = alignRetrievalDebugToAnswerProducts(retrievalDebug, answerProducts);
   const finalAnswerState = { ...answerState, answerMode };
+  const useModelForOnce = body.useModel === true && !shouldUseDeterministicAnswer(config, turnIntent, state, message);
   const review = buildReviewTrace({
     message,
     turnIntent,
@@ -386,6 +406,7 @@ async function buildChatOncePayload({ body, config, products, vectorIndex }) {
     debug: answerDebug,
     products: answerProducts,
     totalProducts: products.length,
+    usedModel: useModelForOnce,
     note: "chat/once returns the same candidate set for answer text, cards and comparison payload"
   });
 
@@ -393,7 +414,6 @@ async function buildChatOncePayload({ body, config, products, vectorIndex }) {
   let fallbackUsed = false;
   let fallbackReason = "";
   let fallbackMessage = "";
-  const useModelForOnce = body.useModel === true && !shouldUseDeterministicAnswer(config, turnIntent, state, message);
   if (useModelForOnce) {
     try {
       for await (const token of streamModelAnswer(config, message, answerProducts, answerHistory, finalAnswerState)) {
@@ -495,9 +515,11 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     // 多会话列表在客户端持久化历史；后端上下文只在内存中。若后端刚重启或该会话未命中内存，
     // 就用当前会话随请求带来的最近历史恢复 turns/state/lastProducts，避免“再便宜点”这类追问失去参照。
     restoreSessionFromHistory(session, body.history, products);
+    const selectedProducts = resolveSelectedProducts(products, body.selectedProductIds);
     const ruleIntent = classifyTurnIntent(session, message);
     const canTryHotCache =
       config.hotQueryCacheEnabled &&
+      selectedProducts.length < 2 &&
       ruleIntent.type === TURN_INTENTS.NEW_SEARCH &&
       !buildClarifyPayload(message, ruleIntent, products);
     const preParseCacheKey = canTryHotCache
@@ -549,7 +571,10 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       });
     }
 
-    const turnIntent = await parseTurnIntent(config, session, message);
+    let turnIntent = await parseTurnIntent(config, session, message);
+    if (selectedProducts.length >= 2) {
+      turnIntent = { ...turnIntent, type: TURN_INTENTS.COMPARE };
+    }
     if (turnIntent.type === TURN_INTENTS.MULTI_NEED) {
       const answerText = buildMultiNeedAnswer();
       const review = buildBoundaryReviewTrace({
@@ -677,7 +702,9 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     });
     const retrievalProducts =
       turnIntent.type === TURN_INTENTS.COMPARE
-        ? resolveComparisonProducts(session, message)
+        ? selectedProducts.length >= 2
+          ? selectedProducts
+          : resolveComparisonProducts(session, message)
         : turnIntent.type === TURN_INTENTS.REFER
           ? resolveReferencedProducts(session, message)
           : products;
@@ -742,6 +769,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     const answerDebug = alignRetrievalDebugToAnswerProducts(retrievalDebug, answerProducts);
     const cards = buildProductCards(answerProducts);
     const finalAnswerState = { ...answerState, answerMode };
+    const useDeterministicAnswer = shouldUseDeterministicAnswer(config, turnIntent, state, message);
     const review = buildReviewTrace({
       message,
       turnIntent,
@@ -756,6 +784,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
       debug: answerDebug,
       products: answerProducts,
       totalProducts: products.length,
+      usedModel: !useDeterministicAnswer,
       note: "review event explains the same candidate set used by token text, products cards and comparison payload"
     });
 
@@ -763,7 +792,7 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
     let fallbackUsed = false;
     let fallbackReason = "";
     let fallbackMessage = "";
-    if (!shouldUseDeterministicAnswer(config, turnIntent, state, message)) {
+    if (!useDeterministicAnswer) {
       // 有模型 Key 时直接把模型增量 token 转发给客户端；模型看到的候选与卡片候选保持一致。
       try {
         for await (const token of streamModelAnswer(config, message, answerProducts, answerHistory, finalAnswerState)) {
@@ -786,8 +815,8 @@ async function handleChat({ body, config, products, vectorIndex, res }) {
         // 模型生成是增强层，检索到的商品候选才是可信事实来源。模型失败时改用同一批 answerProducts
         // 生成本地确定性回答，保证“回答文本、对比组件、商品卡片”仍然来自同一组可校验商品。
         const localAnswer = buildLocalAnswer(message, answerProducts, answerHistory, finalAnswerState);
-        if (answerText.trim()) answerText += "\n\n";
-        answerText += localAnswer;
+        if (answerText.trim()) writeSse(res, "answer_reset", { reason: fallbackReason });
+        answerText = localAnswer;
         await streamText(res, localAnswer, () => markFirstToken({ cacheHit: false, fallback: true }));
       }
     } else {
@@ -877,13 +906,10 @@ function installRoutes(app, { config, products, vectorIndex }) {
       ok: true,
       productCount: products.length,
       vectorStore: config.vectorStore,
-      qdrantUrl: config.qdrantUrl,
-      qdrantCollection: config.qdrantCollection,
       embeddingProvider: config.embeddingProvider,
       embeddingDimension: config.embeddingDimension,
       modelEnabled: Boolean(config.llmApiKey),
       llmProvider: config.llmProvider,
-      llmModel: config.llmProvider === "deepseek" ? config.deepseekModel : config.arkModel,
       hotQueryCache: config.hotQueryCacheEnabled ? hotQueryCache.snapshot() : { enabled: false },
       sessionPersistence: getSessionPersistenceSnapshot()
     });
@@ -1052,7 +1078,7 @@ function installRoutes(app, { config, products, vectorIndex }) {
           : turnIntent.type === TURN_INTENTS.REFER
             ? resolveReferencedProducts(session, message)
             : products;
-      const debugLimit = Number(req.body?.limit || 4);
+      const debugLimit = resolveChatProductLimit(req.body?.limit);
       // 调试接口返回解析结果、候选数量和向量分数，方便定位“为什么推荐了这些商品”。
       // compare 意图不走全库向量召回，而是展示从结构化记忆里解析出的对比候选，便于确认“第几款”有没有选对。
       const debug =

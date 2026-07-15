@@ -13,9 +13,11 @@ client/**/build/
 client/LOCAL_ANDROID_DEBUG.md
 node_modules/
 .tools/
+app/.swc/
 dist/
 build/
 qdrant_storage/
+snapshots/
 storage/
 .qdrant-initialized
 server/.data/
@@ -28,9 +30,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-课题说明会：基于_RAG_的多模态电商智能导购_AI_Agent.docx
 ~$*.docx
 AGENTS.md
 project-requirements.md
-参考项目
+docs/
+参考项目/
 

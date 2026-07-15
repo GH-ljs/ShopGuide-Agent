@@ -72,6 +72,12 @@ DEEPSEEK_MODEL=deepseek-chat
 ## 测试
 
 ```powershell
+npm run test:all
+```
+
+也可以按影响范围单独运行：
+
+```powershell
 npm run test:clarify
 npm run test:answer
 npm run test:session

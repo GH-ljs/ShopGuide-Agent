@@ -71,6 +71,7 @@ const cases = [
     expectedCategory: "食品饮料",
     expectedItemIntent: "饮料",
     topShouldContainAny: ["无糖", "0糖", "零糖", "低糖"],
+    allShouldContainAny: ["无糖", "0糖", "零糖", "不含糖", "零添加糖"],
     minResults: 1
   },
   {
@@ -169,6 +170,16 @@ function assertCase(debug, testCase) {
       testCase.topShouldContainAny.some((word) => top.searchableText.includes(word)),
       `${testCase.query} top result should contain one of ${testCase.topShouldContainAny.join(",")}`
     );
+  }
+
+  if (testCase.allShouldContainAny) {
+    // 明确“无糖/低糖”的饮料需求不能混入只有提神、补能但不满足控糖证据的普通功能饮料。
+    for (const product of debug.products) {
+      assert(
+        testCase.allShouldContainAny.some((word) => product.searchableText.includes(word)),
+        `${testCase.query} returned product without sugar-control evidence: ${product.title}`
+      );
+    }
   }
 }
 

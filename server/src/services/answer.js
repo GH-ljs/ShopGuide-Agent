@@ -181,6 +181,23 @@ function isGenericComparisonQuestion(message) {
   return /(对比|比较|区别|差别|不同)/.test(message) && !/(哪个|哪款|哪一个|谁|选哪|怎么选|更|些|一点|不那么|没那么)/.test(message);
 }
 
+function genericComparisonFollowUpDimensions(products) {
+  const categoryText = products.map((product) => `${product.category} ${product.subCategory}`).join(" ");
+  if (/食品饮料|饮料|茶饮|气泡水|碳酸|咖啡/.test(categoryText)) {
+    return "口味、茶感/气泡感、代糖负担或价格";
+  }
+  if (/美妆护肤|防晒|洁面|精华|面膜|眉笔|唇/.test(categoryText)) {
+    return "肤感、成分温和度、防护/功效或价格";
+  }
+  if (/服饰运动|上衣|T恤|卫衣|裤|鞋|背包|帽子/.test(categoryText)) {
+    return "穿着场景、版型/舒适度、耐用性或价格";
+  }
+  if (/数码电子|笔记本|耳机|手机|键盘/.test(categoryText)) {
+    return "性能、续航、便携性或价格";
+  }
+  return "预算、使用场景、核心功能或价格";
+}
+
 function focusRowLabel(focus) {
   if (focus === "肤感") return "清爽/肤感";
   return `${focus}表现`;
@@ -254,9 +271,10 @@ function buildDecisionSummary(message, products, state = {}) {
     const productSummaries = products
       .map((product, index) => `第 ${index + 1} 款偏${comparisonTradeoffText(product)}`)
       .join("；");
+    const followUpDimensions = genericComparisonFollowUpDimensions(products);
     // 普通“对比一下”先呈现差异，不把上一轮偏好直接升级成单一推荐结论。
     // 如果用户继续问“哪个更清爽/哪个更适合户外”，下一轮再按明确维度给决策。
-    return `明确结论：这两款主要差异是 ${productSummaries}。如果你更看重清爽肤感、户外防水或价格，我可以继续按单一维度帮你定。`;
+    return `明确结论：这几款主要差异是 ${productSummaries}。如果你更看重${followUpDimensions}，我可以继续按单一维度帮你定。`;
   }
 
   const recommendation = pickRecommendedProduct(message, products, state);
@@ -345,7 +363,7 @@ export function buildComparisonPayload(message, products, state = {}) {
   ];
 
   // comparison 事件是给客户端渲染“对比组件”的结构化协议：文本回答负责自然语言解释，
-  // 这里负责稳定字段和商品 ID 绑定，避免 Android 从自然语言里再猜价格、推荐项或对比维度。
+  // 这里负责稳定字段和商品 ID 绑定，避免任一客户端从自然语言里再猜价格、推荐项或对比维度。
   return {
     title: "商品对比",
     conclusion: decisionSummary,
@@ -483,7 +501,6 @@ export function buildProductCards(products) {
     category: product.category,
     subCategory: product.subCategory,
     price: product.basePrice,
-    imagePath: product.imagePath,
     imageUrl: imageUrlFor(product),
     reason: shortDescription(product)
   }));
@@ -498,13 +515,11 @@ export function buildProductDetail(product) {
     category: product.category,
     subCategory: product.subCategory,
     price: product.basePrice,
-    imagePath: product.imagePath,
     imageUrl: imageUrlFor(product),
     marketingDescription: product.marketingDescription,
     skus: product.skus,
     officialFaq: product.officialFaq,
-    userReviews: product.userReviews,
-    sourceFile: product.sourceFile
+    userReviews: product.userReviews
   };
 }
 

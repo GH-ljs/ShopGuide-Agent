@@ -25,18 +25,12 @@ export function parseCartIntent(message: string, recentProducts: ProductCard[]):
   if (CHECKOUT_PATTERN.test(text)) return { type: "checkout" };
   if (VIEW_CART_PATTERN.test(text)) return { type: "view_cart" };
   if (CHANGE_QTY_PATTERN.test(text) && /(购物车|数量|件数|第|这个|它)/.test(text)) {
-    return {
-      type: "change_qty",
-      itemIndex: extractOrdinalIndex(text),
-      quantity: extractQuantity(text)
-    };
+    return { type: "change_qty", itemIndex: extractOrdinalIndex(text), quantity: extractQuantity(text) };
   }
   if (REMOVE_PATTERN.test(text) && /(购物车|第|这个|它|删掉|删除|移除)/.test(text)) {
     return { type: "remove", itemIndex: extractOrdinalIndex(text) };
   }
-  if (ADD_PATTERN.test(text)) {
-    return resolveAddIntent(text, recentProducts);
-  }
+  if (ADD_PATTERN.test(text)) return resolveAddIntent(text, recentProducts);
   return { type: "none" };
 }
 
@@ -59,16 +53,12 @@ function resolveAddIntent(text: string, recentProducts: ProductCard[]): CartInte
   if (!recentProducts.length) return { type: "add", needsClarification: true };
 
   const ordinal = extractOrdinalIndex(text);
-  if (typeof ordinal === "number") {
-    return { type: "add", product: recentProducts[ordinal] };
-  }
+  if (typeof ordinal === "number") return { type: "add", product: recentProducts[ordinal] };
 
   const keyword = text.replace(ADD_PATTERN, "").trim();
   const matched = keyword ? matchProduct(keyword, recentProducts) : null;
   if (matched) return { type: "add", product: matched };
-  if (/(这个|它|这款|刚才|上面)/.test(text) && recentProducts.length === 1) {
-    return { type: "add", product: recentProducts[0] };
-  }
+  if (/(这个|它|这款|刚才|上面)/.test(text) && recentProducts.length === 1) return { type: "add", product: recentProducts[0] };
   if (recentProducts.length === 1) return { type: "add", product: recentProducts[0] };
   return { type: "add", needsClarification: true };
 }

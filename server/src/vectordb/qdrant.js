@@ -50,8 +50,7 @@ function buildPayload(product) {
     brand: product.brand,
     category: product.category,
     subCategory: product.subCategory,
-    price: product.basePrice,
-    sourceFile: product.sourceFile
+    price: product.basePrice
   };
 }
 

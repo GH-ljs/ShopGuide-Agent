@@ -2,6 +2,7 @@
 // 验证 LLM 生成失败时，/api/chat 不会把错误直接甩给用户，而是降级为本地规则回答。
 // 这属于工程容错测试：检索结果仍可信时，模型只是增强层，失败不能阻断导购主链路。
 import { config } from "../config.js";
+import http from "node:http";
 import { loadProducts } from "../data/loader.js";
 import { createApp } from "../http.js";
 import { createSearchIndex } from "../vectordb/factory.js";
@@ -25,6 +26,14 @@ function parseSseEvents(text) {
 }
 
 async function createTestServer() {
+  // 先返回一个 token 再强制断流，覆盖“模型半途失败”而不仅是“连接前失败”。
+  const modelServer = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "半截模型回答" } }] })}\n\n`);
+    setTimeout(() => res.destroy(), 10);
+  });
+  await new Promise((resolve) => modelServer.listen(0, "127.0.0.1", resolve));
+
   const products = loadProducts(config.datasetDir);
   const testConfig = {
     ...config,
@@ -35,7 +44,7 @@ async function createTestServer() {
     llmProvider: "deepseek",
     llmApiKey: "test-key",
     deepseekApiKey: "test-key",
-    deepseekBaseUrl: "http://127.0.0.1:1"
+    deepseekBaseUrl: `http://127.0.0.1:${modelServer.address().port}`
   };
   const vectorIndex = createSearchIndex(testConfig, products);
   const app = createApp({ config: testConfig, products, vectorIndex });
@@ -43,7 +52,7 @@ async function createTestServer() {
   const server = await new Promise((resolve) => {
     const instance = app.listen(0, () => resolve(instance));
   });
-  return { server, baseUrl: `http://localhost:${server.address().port}` };
+  return { server, modelServer, baseUrl: `http://localhost:${server.address().port}` };
 }
 
 async function requestChat(baseUrl) {
@@ -63,7 +72,7 @@ async function requestChat(baseUrl) {
 }
 
 async function run() {
-  const { server, baseUrl } = await createTestServer();
+  const { server, modelServer, baseUrl } = await createTestServer();
 
   try {
     const events = await requestChat(baseUrl);
@@ -72,6 +81,7 @@ async function run() {
     const done = events.find((item) => item.event === "done")?.data;
 
     assert(events.some((item) => item.event === "token"), "fallback should still stream token events");
+    assert(events.some((item) => item.event === "answer_reset"), "partial model output should be reset before local fallback tokens");
     assert(fallbackMeta?.fallback === true, "fallback meta should tell client to show a notice");
     assert(fallbackMeta.reason === "MODEL_ERROR", "fallback meta should expose MODEL_ERROR reason");
     assert(products.length > 0, "fallback should still return product cards");
@@ -82,6 +92,7 @@ async function run() {
     console.log("Fallback tests passed.");
   } finally {
     server.close();
+    modelServer.close();
   }
 }
 

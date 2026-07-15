@@ -1,16 +1,17 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "module": "ESNext",
-    "lib": ["ES2020", "DOM"],
+    "target": "es2019",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
     "strict": true,
-    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
     "resolveJsonModule": true,
-    "isolatedModules": true,
+    "isolatedModules": false,
     "noEmit": true,
-    "jsx": "preserve",
-    "types": ["@dcloudio/types"]
+    "types": ["@tarojs/taro", "@tarojs/components"]
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"]
+  "include": ["src", "config"]
 }

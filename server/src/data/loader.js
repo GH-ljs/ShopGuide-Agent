@@ -44,7 +44,7 @@ function flattenReviewText(reviews = []) {
 }
 
 // 把原始 JSON 字段转成后端统一商品结构，避免接口层直接依赖原始数据格式。
-function normalizeProduct(raw, filePath, datasetDir) {
+function normalizeProduct(raw, datasetDir) {
   const knowledge = raw.rag_knowledge || {};
   const imagePath = raw.image_path ? path.join(datasetDir, raw.image_path) : "";
   const minSkuPrice = Math.min(...(raw.skus || []).map((sku) => Number(sku.price)).filter(Number.isFinite));
@@ -75,7 +75,6 @@ function normalizeProduct(raw, filePath, datasetDir) {
     marketingDescription: knowledge.marketing_description || "",
     officialFaq: knowledge.official_faq || [],
     userReviews: knowledge.user_reviews || [],
-    sourceFile: path.relative(datasetDir, filePath),
     searchableText
   };
 }
@@ -89,7 +88,7 @@ export function loadProducts(datasetDir) {
   const products = files.map((filePath) => {
     // 数据集是中文内容，必须用 utf8 读取，否则会出现乱码。
     const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return normalizeProduct(raw, filePath, datasetDir);
+    return normalizeProduct(raw, datasetDir);
   });
 
   return products.sort((a, b) => a.productId.localeCompare(b.productId));
