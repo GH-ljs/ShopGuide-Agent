@@ -111,7 +111,7 @@ npm run build:h5
 npm run build:mp-weixin
 ```
 
-## 简历描述
+## 可用描述
 
 ```text
 ShopGuide Agent：基于 Taro/React/TypeScript 与 Node.js RAG 的跨端智能导购项目，支持 H5 与微信小程序。实现流式聊天、主动追问卡片、结构化商品推荐/对比、收藏购物车与订单模拟闭环；后端采用 LLM Planner + Validator 的受控 Agent 编排，结合 Qdrant 与 Doubao Embedding 完成商品召回，并用硬过滤保证回答、卡片和详情页均基于真实商品数据，降低模型幻觉。
@@ -126,7 +126,7 @@ ShopGuide Agent：基于 Taro/React/TypeScript 与 Node.js RAG 的跨端智能�
 ## 文档入口
 
 - [代码导读](docs/code-walkthrough.md)
-- [项目学习路线](docs/learning-guide.md)
+- [项目路线](docs/learning-guide.md)
 - [前端说明](app/README.md)
 - [系统架构](docs/reference/architecture.md)
 - [Agent 编排](docs/reference/agent-orchestration.md)
